@@ -1,19 +1,30 @@
-# Sarah's version of the bird modelling process
-library(tidyverse)
-library(fs)
-
-in_dat_pth <- "analysis/data/derived_data"
-# unzip files because Google Drive broke them down into many zip files for download
-#
-# file_ls <- list.files(in_dat_pth, full.names = TRUE)
-#
-# walk(file_ls, unzip, overwrite = FALSE)
+# Sarah's version of the bird modeling process
 
 # Steps to the analysis
 # 1 Get the environmental and bird data in a format that can be modelled
 # 2 Run GBM once to determine which variables to use
 # 3 Run GBM nBootstrap times with important variables
 # 4 Make predictions for each bootstrapped model and take the mean
+
+library(tidyverse)
+library(fs)
+library(sf)
+
+in_dat_pth <- "analysis/data/derived_data"
+
+# For example use Missisa as study area
+study_area <- read_sf("../ChurchillAnalysis/inputNV/caribouRanges/Caribou_Range_Boundary.shp") %>%
+  filter(RANGE_NAME == "Missisa")
+
+nBootstrap <- 2
+
+nSPP <- 2
+
+# unzip files because Google Drive broke them down into many zip files for download
+#
+# file_ls <- list.files(in_dat_pth, full.names = TRUE)
+#
+# walk(file_ls, unzip, overwrite = FALSE)
 
 # load data that BAM prepared and rename objects to be literate
 load(file.path(in_dat_pth, "0_data/processed/BAMv6_RoFpackage_2022-01.RData"))
@@ -81,41 +92,53 @@ vars_sel <- c("eskerpoint",
               "heath_G750.O", "height2015.ntems", "LIDARheight", "marsh_G750.O",
               "mixedtreed_G750.O", "mudflat_G750.O", "openwater_G750.O", "road_yesno",
               "slope", "sparsetreed_G750.O", "swamp_G750.O", "TPI", "treecover",
-              "turbidwater_G750.O", "volume2015.ntems")
+              "turbidwater_G750.O", "volume2015.ntems", "ecozone")
 
-run_brt_xv <- function(spp, RATE=0.001) {
-  i <- 1
-  si <- BB[,i]
-  if (sum(y[si, spp]) < 1)
-    return(structure(sprintf("0 detections for %s", spp), class="try-error"))
-  xi <- data.frame(
-    count=as.numeric(y[si, spp]),
-    offset=off[si, spp],
-    ecozone=ifelse(xx1$ecozone=="hudson_plain", 1, 0)[si],
-    xx2[si, cn2])
-  out <- try(gbm.step(xi,
-                      gbm.y = 1,
-                      gbm.x = 3:ncol(xi),
-                      offset = xi$offset,
-                      family = "poisson",
-                      tree.complexity = 3,
-                      learning.rate = RATE,
-                      bag.fraction = 0.5))
-  if (!inherits(out, "try-error"))
-    out$rof_settings <- list(RATE=RATE, spp=spp, i=i)
-  out
-}
+pt_vars <- mutate(pt_vars, ecozone = ifelse(pt_meta$ecozone == "hudson_plain", 1, 0))
 
-res <- run_brt_xv("ALFL")
+# train a model with cross validation to get best ntrees and important variables
+cross_val_out <- map_dfr(SPP[1:nSPP], run_cross_val,
+                         samp_row_ind = pt_resamps_250[,1],
+                         samp_col_ind = 1, y = y, off =  off, pred_vars = pt_vars,
+                         pred_var_nms = vars_sel,
+                         save_dir = file.path(in_dat_pth, "results"),
+                         max.trees = 1000)
 
+# fit models for bootstrap samples using ntrees and important
+# variables from cross val run
+boot_out <- pmap(cross_val_out, run_boot,
+                 resamps = as.data.frame(pt_resamps_250[, 1:nBootstrap]),
+                 y = y, off =  off, pred_vars = pt_vars,
+                 save_dir = file.path(in_dat_pth, "results"))
+
+# make a stack of predictor variable rasters
 fl <- list.files(file.path(in_dat_pth,"0_data/processed/prediction-rasters"),
                  full.names = TRUE)
 names(fl) <- fl %>% path_file() %>%  path_ext_remove()
 
-fl_use <- fl[which(names(fl) %in% c(vars_sel, "ecozone"))]
+fl_use <- fl[which(names(fl) %in% vars_sel)]
 
 var_stack <- raster::stack(fl_use)
 
-# Note that predict.gbm says it does not include the offset
-res_pred <- predict(var_stack, res,
-                    filename = file.path(in_dat_pth, "results/test_pred.tif"))
+# Crop to study area
+var_stack <- raster::crop(var_stack,
+                          study_area %>% st_transform(st_crs(var_stack)))
+
+# make predictions for each bootstrap model version and then take the mean
+# Note that predict.gbm says it does not include the offset could we make a
+# raster of the offset?
+pred_out <- map(boot_out, ~map(., ~raster::predict(var_stack, readRDS(.x),
+             filename = str_replace(.x, "\\.rds", ".tif"),
+             type = "response", overwrite = TRUE)))
+
+pred_out_mean <- map(
+  pred_out,
+  ~raster::calc(raster::stack(.x), fun = mean,
+                na.rm = TRUE,
+                filename = file.path(in_dat_pth, "results",
+                                     str_replace(names(.x[[1]]), "_samp_.",
+                                                 "_boot_mean.tif")),
+                overwrite = TRUE)
+  )
+
+
