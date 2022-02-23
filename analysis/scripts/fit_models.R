@@ -101,8 +101,7 @@ cross_val_out <- map_dfr(SPP[1:nSPP], run_cross_val,
                          samp_row_ind = pt_resamps_250[,1],
                          samp_col_ind = 1, y = y, off =  off, pred_vars = pt_vars,
                          pred_var_nms = vars_sel,
-                         save_dir = file.path(in_dat_pth, "results"),
-                         max.trees = 1000)
+                         save_dir = file.path(in_dat_pth, "results"))
 
 # fit models for bootstrap samples using ntrees and important
 # variables from cross val run
@@ -141,4 +140,4 @@ pred_out_mean <- map(
                 overwrite = TRUE)
   )
 
-
+pred_out_mean %>% raster::stack() %>% raster::plot()
