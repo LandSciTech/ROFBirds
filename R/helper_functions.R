@@ -136,11 +136,11 @@ brt_boot <- function(spp, ntrees, rel_inf, pred_data, learning_rate = 0.001,
   out
 }
 
-run_boot <- function(spp, ntrees, rel_inf, resamps,
+run_boot <- function(spp, ntrees, rel_inf, rel_inf_thold = 0, resamps,
                      y, off, pred_vars, learning_rate = 0.001, save_dir,
                      n_cores = 1, ...){
 
-  pred_var_nms <- filter(rel_inf, rel.inf > 0) %>% pull(var)
+  pred_var_nms <- filter(rel_inf, rel.inf > rel_inf_thold) %>% pull(var)
 
   dat_lst <- map(resamps,
                  ~make_pred_data(spp = spp,

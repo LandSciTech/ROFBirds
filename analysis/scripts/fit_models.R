@@ -16,9 +16,19 @@ in_dat_pth <- "analysis/data/derived_data"
 study_area <- read_sf("../ChurchillAnalysis/inputNV/caribouRanges/Caribou_Range_Boundary.shp") %>%
   filter(RANGE_NAME == "Missisa")
 
+# PARAMETERS to set #====================================
+# Number of bootstrap samples to use. A number between 2 and 250
 nBootstrap <- 2
 
+# Number of species to make models for. A number between 1 and 89
 nSPP <- 2
+
+# The relative influence at which to cut off the variables included in the final
+# model. A number between 0 and 100. Make if higher for models with fewer
+# variables
+rel_inf_thold <- 5
+
+# Load BAM inputs #=======================================
 
 # unzip files because Google Drive broke them down into many zip files for download
 #
@@ -96,6 +106,8 @@ vars_sel <- c("eskerpoint",
 
 pt_vars <- mutate(pt_vars, ecozone = ifelse(pt_meta$ecozone == "hudson_plain", 1, 0))
 
+# Train models #==============================
+
 # train a model with cross validation to get best ntrees and important variables
 cross_val_out <- map_dfr(SPP[1:nSPP], run_cross_val,
                          samp_row_ind = pt_resamps_250[,1],
@@ -103,21 +115,50 @@ cross_val_out <- map_dfr(SPP[1:nSPP], run_cross_val,
                          pred_var_nms = vars_sel,
                          save_dir = file.path(in_dat_pth, "results"))
 
+# save as a csv
+cross_val_out %>% unnest(rel_inf) %>%
+  write_csv(file.path(in_dat_pth, "results/cross_val_results.csv"))
+
 # fit models for bootstrap samples using ntrees and important
 # variables from cross val run
 boot_out <- pmap(cross_val_out, run_boot,
+                 rel_inf_thold = rel_inf_thold,
                  resamps = as.data.frame(pt_resamps_250[, 1:nBootstrap]),
                  y = y, off =  off, pred_vars = pt_vars,
                  save_dir = file.path(in_dat_pth, "results"))
+
+# Make predictions #=============================
+
+# Build boot_out from stored info
+boot_out <- map(SPP[1:nSPP],
+                ~list.files(file.path(in_dat_pth, "results"),
+                            pattern = paste0(.x, "_brt_\\d.*_trees_samp.*rds"),
+                            full.names = TRUE))
+
+# Build cross_val_out from stored info
+cross_val_out <- read_csv(file.path(in_dat_pth, "results/cross_val_results.csv"),
+                           show_col_types = FALSE) %>%
+  nest(rel_inf = c(var, rel.inf))
+
+
+# get predictors actually used in models
+vars_used <- cross_val_out %>% unnest(rel_inf) %>%
+  filter(rel.inf > rel_inf_thold) %>%
+  pull(var) %>% unique()
 
 # make a stack of predictor variable rasters
 fl <- list.files(file.path(in_dat_pth,"0_data/processed/prediction-rasters"),
                  full.names = TRUE)
 names(fl) <- fl %>% path_file() %>%  path_ext_remove()
 
-fl_use <- fl[which(names(fl) %in% vars_sel)]
+fl_use <- fl[which(names(fl) %in% vars_used)]
 
 var_stack <- raster::stack(fl_use)
+
+# store this stack for future use with models
+raster::writeRaster(var_stack,
+                    file.path(in_dat_pth, "results/rast_stack_all_imp_vars.grd"),
+                    bylayer = FALSE, overwrite = TRUE)
 
 # Crop to study area
 var_stack <- raster::crop(var_stack,
@@ -140,4 +181,15 @@ pred_out_mean <- map(
                 overwrite = TRUE)
   )
 
+pred_out_sd <- map(
+  pred_out,
+  ~raster::calc(raster::stack(.x), fun = sd,
+                na.rm = TRUE,
+                filename = file.path(in_dat_pth, "results",
+                                     str_replace(names(.x[[1]]), "_samp_.",
+                                                 "_boot_sd.tif")),
+                overwrite = TRUE)
+)
+
 pred_out_mean %>% raster::stack() %>% raster::plot()
+pred_out_sd %>% raster::stack() %>% raster::plot()
