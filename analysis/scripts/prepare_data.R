@@ -3,6 +3,7 @@ library(tidyverse)
 library(sf)
 
 sourceData <- "C:/Users/endicotts/Documents/gitprojects/ROFSyncSim/ROFDemo_data"
+in_dat_pth <- "analysis/data/derived_data"
 
 rof <- read_sf(file.path(sourceData, "project_ranges.shp")) %>%
   filter(RANGE_NAME %in% c("Pagwachuan", "Nipigon","Missisa", "James Bay"))
@@ -19,8 +20,9 @@ inData <- caribouMetrics::loadSpatialInputs(
 )
 
 inData$roads <- inData$roads > 0
+names(inData$roads) <- "roads"
 inData$esker <- inData$esker > 0
-
+names(inData$esker) <- "esker"
 plc_layers <- raster::layerize(inData$refRast)
 
 # translate plc values to land cover class names
@@ -55,9 +57,9 @@ plc_layers750 <- map(plc_layers750, ~`names<-`(.x, paste0(names(.x), "_750")))
 
 # make a raster stack of predictors to use for extracting
 # BAM's models only use the 750 versions in the end.
-pred_stk <- raster::stack(plc_layers750, inData$roads, inData$esker)
+pred_stk <- raster::stack(c(plc_layers750, inData$roads, inData$esker))
 
-# Get point locations
+# Get point locations prepared by BAM
 load(file.path(in_dat_pth, "0_data/processed/BAMv6_RoFpackage_2022-01.RData"))
 
 bird_pts <- xx1
@@ -65,23 +67,22 @@ bird_pts <- xx1
 rm(xx1, xx2, BB, cn2)
 
 bird_pts <- bird_pts %>% st_as_sf(coords = c("X", "Y")) %>% st_set_crs(4269) %>%
-  select(PKEY_V4, ecozone) %>% st_transform(st_crs(pred_stk))
+  select(PKEY_V4) %>% st_transform(st_crs(pred_stk))
 
 ext_pt_data <- raster::extract(pred_stk, bird_pts, df = TRUE)
 
 bird_pts <- bind_cols(bird_pts, ext_pt_data)
 
-# get index of rows that are in bird_pts
-
+# get index of rows that are in bird_pts and are not NA. NA means the points did
+# not overlap the raster because these rasters are only for the ROF
 pkey_keep <- bird_pts %>% filter(!is.na(Ocean_750)) %>%
   pull(PKEY_V4)
 
 inds <- which(rownames(off) %in% pkey_keep)
 
-bird_pts <- select(bird_pts, -PKEY_V4) %>% st_drop_geometry() %>%
-  mutate(ecozone = ifelse(ecozone == "hudson_plain", 1, 0))
+bird_pts <- select(bird_pts, -PKEY_V4, -ID) %>% st_drop_geometry()
 
-cross_val_out <- map_dfr(SPP[1:nSPP], run_cross_val,
+cross_val_out <- map_dfr(SPP[1:2], run_cross_val,
                          samp_row_ind = inds,
                          samp_col_ind = 1, y = y, off =  off, pred_vars = bird_pts,
                          pred_var_nms = names(bird_pts),

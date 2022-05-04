@@ -49,12 +49,14 @@ pt_resamps_250 <- BB
 
 # cn2 222 vector of variable names all are cols in xx2 but it has other cols too
 # It is cols in xx2 that have SD above 0.0001 (84 removed) and correlation > 0.9
-# (54 removed) when a pair are correlated the one in the row is kept
-# a subset is then hard coded in below (there was no explanation of why)
+# (54 removed) when a pair are correlated the one in the row is kept a subset is
+# then hard coded in below (This is from a reduced list of 110 variables that
+# BAM came up with after discussions with the RoF team and our own internal
+# discussions)
 vars_sel <- cn2
 
 # off 11053, 89 rownames PKEY point identifier also in xx1, colnames are sp names
-# These are offsets, don't know where they come from.
+# These are offsets.
 
 # SPP 89 vector of species codes. Filtered to those with >20 detections
 

@@ -29,3 +29,5 @@ vignettes/*.pdf
 .Renviron
 .Rproj.user
 */data/*
+*/figures/*
+
