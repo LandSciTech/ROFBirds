@@ -17,7 +17,9 @@ Preparing spatial data and extracting to bird points:
 [Ring-of-Fire-spatial-data-birds](https://drive.google.com/drive/folders/1YN8s3DBvIftf3q9o0SH-UMN0pHLLf02C?usp=sharing)
 
 Fitting BRT models:
-[ring-of-fire-brt](https://drive.google.com/drive/folders/1nCotZfYJeuPw1_PfZq9fBTOOeF4QdeaX?usp=sharing)
+[ring-of-fire-brt](https://drive.google.com/drive/folders/1nCotZfYJeuPw1_PfZq9fBTOOeF4QdeaX?usp=sharing).
+Code is also available in a [GitHub
+repository](https://github.com/crosbya1/ring-of-fire-brt)
 
 ## ROF BAM Outputs
 
