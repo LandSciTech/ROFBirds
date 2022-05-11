@@ -20,8 +20,3 @@ Fitting BRT models:
 [ring-of-fire-brt](https://drive.google.com/drive/folders/1nCotZfYJeuPw1_PfZq9fBTOOeF4QdeaX?usp=sharing).
 Code is also available in a [GitHub
 repository](https://github.com/crosbya1/ring-of-fire-brt)
-
-## ROF BAM Outputs
-
-Models and distribution maps for all species are available
-[here](https://borealbirds.github.io/ring-of-fire/)
