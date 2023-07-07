@@ -58,6 +58,7 @@ rm(xx1, xx2, BB, cn2)
 bird_pts <- bird_pts %>% st_as_sf(coords = c("X", "Y"), crs = st_crs(4269)) %>%
   select(PKEY_V4)
 
+# keep only points in rof
 bird_pts <- st_filter(bird_pts, rof %>% st_transform(st_crs(bird_pts))) %>%
   st_transform(st_crs(pred_stk))
 
