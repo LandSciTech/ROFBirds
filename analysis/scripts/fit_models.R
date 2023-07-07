@@ -38,6 +38,7 @@ rel_inf_thold <- 5
 # walk(file_ls, unzip, overwrite = FALSE)
 
 # load data that BAM prepared and rename objects to be literate
+# data saved at line 196 Andy_scripts/01-2_create-brt-database.R
 load(file.path(in_dat_pth, "0_data/processed/BAMv6_RoFpackage_2022-01.RData"))
 
 # Rename objects to be more literate
