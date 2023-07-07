@@ -11,9 +11,10 @@ library(fs)
 library(sf)
 
 in_dat_pth <- "analysis/data/derived_data"
+sourceData <- "C:/Users/endicotts/Documents/gitprojects/ROFSyncSim/ROFDemo_data"
 
 # For example use Missisa as study area
-study_area <- read_sf("../ChurchillAnalysis/inputNV/caribouRanges/Caribou_Range_Boundary.shp") %>%
+study_area <- read_sf(file.path(sourceData, "project_ranges.shp")) %>%
   filter(RANGE_NAME == "Missisa")
 
 # PARAMETERS to set #====================================
@@ -155,27 +156,28 @@ names(fl) <- fl %>% path_file() %>%  path_ext_remove()
 
 fl_use <- fl[which(names(fl) %in% vars_used)]
 
-var_stack <- raster::stack(fl_use)
+var_stack <- terra::rast(fl_use)
 
 # store this stack for future use with models
-raster::writeRaster(var_stack,
+terra::writeRaster(var_stack,
                     file.path(in_dat_pth, "results/rast_stack_all_imp_vars.grd"),
-                    bylayer = FALSE, overwrite = TRUE)
+                    overwrite = TRUE)
 
 # Crop to study area
-var_stack <- raster::crop(var_stack,
-                          study_area %>% st_transform(st_crs(var_stack)))
+var_stack <- terra::crop(var_stack,
+                         study_area %>% st_transform(st_crs(var_stack)))
 
 # make predictions for each bootstrap model version and then take the mean
 # Note that predict.gbm says it does not include the offset could we make a
-# raster of the offset?
-pred_out <- map(boot_out, ~map(., ~raster::predict(var_stack, readRDS(.x),
+# raster of the offset? Would depend on time of day so probably not really.
+pred_out <- map(boot_out, ~map(., ~terra::predict(var_stack, readRDS(.x),
              filename = str_replace(.x, "\\.rds", ".tif"),
-             type = "response", overwrite = TRUE)))
+             type = "response", overwrite = TRUE) %>%
+               setNames(fs::path_file(.x) %>% fs::path_ext_remove())))
 
 pred_out_mean <- map(
   pred_out,
-  ~raster::calc(raster::stack(.x), fun = mean,
+  ~terra::app(terra::rast(.x), fun = mean,
                 na.rm = TRUE,
                 filename = file.path(in_dat_pth, "results",
                                      str_replace(names(.x[[1]]), "_samp_.",
@@ -185,7 +187,7 @@ pred_out_mean <- map(
 
 pred_out_sd <- map(
   pred_out,
-  ~raster::calc(raster::stack(.x), fun = sd,
+  ~terra::app(terra::rast(.x), fun = sd,
                 na.rm = TRUE,
                 filename = file.path(in_dat_pth, "results",
                                      str_replace(names(.x[[1]]), "_samp_.",
@@ -193,5 +195,5 @@ pred_out_sd <- map(
                 overwrite = TRUE)
 )
 
-pred_out_mean %>% raster::stack() %>% raster::plot()
-pred_out_sd %>% raster::stack() %>% raster::plot()
+pred_out_mean %>% setNames(cross_val_out$spp) %>% terra::rast() %>% terra::plot()
+pred_out_sd %>% setNames(cross_val_out$spp) %>% terra::rast() %>% terra::plot()

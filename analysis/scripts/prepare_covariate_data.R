@@ -1,4 +1,4 @@
-# Prepare data for model prediction from raw data available in ROFSyncSim
+# Prepare covariate data for model prediction from raw data available in ROFSyncSim
 library(tidyverse)
 library(sf)
 
@@ -19,11 +19,7 @@ inData <- caribouMetrics::loadSpatialInputs(
   convertToRast = c("esker", "roads")
 )
 
-inData$roads <- inData$roads > 0
-names(inData$roads) <- "roads"
-inData$esker <- inData$esker > 0
-names(inData$esker) <- "esker"
-plc_layers <- raster::layerize(inData$refRast)
+plc_layers <- terra::segregate(inData$refRast)
 
 # translate plc values to land cover class names
 plc_classes <- read_csv(file.path(sourceData, "ROFBirdModels/plcClasses.csv"))
@@ -33,31 +29,24 @@ plc_classes <- plc_classes %>%
            str_replace_all("\\_+", "_"))
 
 names(plc_layers) <- plc_classes %>%
-  filter(Code %in% raster::unique(inData$refRast)) %>%
+  filter(Code %in% terra::unique(inData$refRast)[,1]) %>%
   pull(Class)
 
-rastfw250 <- raster::focalWeight(plc_layers, 250, type = "Gauss")
-rastfw750 <- raster::focalWeight(plc_layers, 750, type = "Gauss")
+rastfw250 <- terra::focalMat(plc_layers, 250, type = "Gauss")
+rastfw750 <- terra::focalMat(plc_layers, 750, type = "Gauss")
 
-plc_layers250 <- map(1:raster::nlayers(plc_layers),
-                     ~pfocal::pfocal(plc_layers[[.x]], rastfw250,
-                                     transform_function = "MULTIPLY",
-                                     reduce_function = "SUM",
-                                     mean_divider = "KERNEL_COUNT"))
+plc_layers250 <- terra::focal(plc_layers, rastfw250, "sum")
 
-plc_layers250 <- map(plc_layers250, ~`names<-`(.x, paste0(names(.x), "_250")))
+names(plc_layers250) <- paste0(names(plc_layers250), "_250")
 
-plc_layers750 <- map(1:raster::nlayers(plc_layers),
-                     ~pfocal::pfocal(plc_layers[[.x]], rastfw750,
-                                     transform_function = "MULTIPLY",
-                                     reduce_function = "SUM",
-                                     mean_divider = "KERNEL_COUNT"))
+plc_layers750 <- terra::focal(plc_layers, rastfw750, "sum")
 
-plc_layers750 <- map(plc_layers750, ~`names<-`(.x, paste0(names(.x), "_750")))
+names(plc_layers750) <- paste0(names(plc_layers750), "_750")
 
 # make a raster stack of predictors to use for extracting
 # BAM's models only use the 750 versions in the end.
-pred_stk <- raster::stack(c(plc_layers750, inData$roads, inData$esker))
+pred_stk <- c(plc_layers750, setNames(inData$roads, "roads"),
+              setNames(inData$esker, "esker"))
 
 # Get point locations prepared by BAM
 load(file.path(in_dat_pth, "0_data/processed/BAMv6_RoFpackage_2022-01.RData"))
@@ -66,21 +55,28 @@ bird_pts <- xx1
 
 rm(xx1, xx2, BB, cn2)
 
-bird_pts <- bird_pts %>% st_as_sf(coords = c("X", "Y")) %>% st_set_crs(4269) %>%
-  select(PKEY_V4) %>% st_transform(st_crs(pred_stk))
+bird_pts <- bird_pts %>% st_as_sf(coords = c("X", "Y"), crs = st_crs(4269)) %>%
+  select(PKEY_V4)
 
-ext_pt_data <- raster::extract(pred_stk, bird_pts, df = TRUE)
+bird_pts <- st_filter(bird_pts, rof %>% st_transform(st_crs(bird_pts))) %>%
+  st_transform(st_crs(pred_stk))
 
-bird_pts <- bind_cols(bird_pts, ext_pt_data)
+ext_pt_data <- terra::extract(pred_stk, terra::vect(bird_pts), bind = TRUE)
+
+bird_pts <- st_as_sf(ext_pt_data)
 
 # get index of rows that are in bird_pts and are not NA. NA means the points did
 # not overlap the raster because these rasters are only for the ROF
-pkey_keep <- bird_pts %>% filter(!is.na(Ocean_750)) %>%
-  pull(PKEY_V4)
+pkey_keep <- bird_pts %>% pull(PKEY_V4)
 
 inds <- which(rownames(off) %in% pkey_keep)
 
-bird_pts <- select(bird_pts, -PKEY_V4, -ID) %>% st_drop_geometry()
+bird_pts <- select(bird_pts, -PKEY_V4) %>% st_drop_geometry()
+
+# remove variables with 0 variation
+no_vari <- colSums(bird_pts, na.rm = TRUE) %>% {which(. ==0)} %>% names()
+
+bird_pts <- bird_pts %>% select(-any_of(no_vari))
 
 cross_val_out <- map_dfr(SPP[1:2], run_cross_val,
                          samp_row_ind = inds,
