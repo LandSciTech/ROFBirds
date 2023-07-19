@@ -16,9 +16,6 @@ juris <- "ontario"
 
 options(reproducible.cachePath = "analysis/data/cache_data")
 
-# Not going to replicate creating offsets at this point since we don't need to
-# but I will explain my understanding of how they are calculated.
-
 # Step 1: #=====================================================================
 # download BBS data, extract from files, filter to area and time range
 # and based on quality, Get species letter codes, change format to one col per
@@ -43,8 +40,10 @@ obs_ON_1991_2 <- obs_ON_1991 %>%
   left_join(species_list %>% select(AOU, AOU4), by = "AOU") %>%
   # Some are missing so keep numeric codes for those
   mutate(sp_code = coalesce(AOU4, as.character(AOU)), .keep = "unused") %>%
-  select(-contains("Car"), -contains("Noise")) %>%
-  tidyr::pivot_longer(Stop1:Stop50, names_to = "Stop", values_to = "Abund") %>%
+  select(-contains("Car"), -contains("Noise"), -RouteTotal, -TotalSpp,
+         -contains("ObsFirstYear"), -Assistant, -RunType, -QualityCurrentID,
+         -julian) %>%
+  tidyr::pivot_longer(contains("Stop"), names_to = "Stop", values_to = "Abund") %>%
   filter(Abund != 0) %>%
   tidyr::pivot_wider(names_from = sp_code, values_from = Abund, values_fill = 0)
 
@@ -53,9 +52,53 @@ obs_ON_1991_2 <- obs_ON_1991 %>%
 # Get locations of each stop on the routes from data supplied by CWS, not
 # currently available online.
 
+# Get names
+# sf::st_layers("analysis/data/raw_data/BBS Routes_CurrentStops_Discontinued.gdb")
+
+cur_stops <- sf::st_read("analysis/data/raw_data/BBS Routes_CurrentStops_Discontinued.gdb",
+                         layer = "CURRENT_STOPS")
+discon_stops <- sf::st_read("analysis/data/raw_data/BBS Routes_CurrentStops_Discontinued.gdb",
+                         layer = "DISCONTINUED_STOPS")
+
+ON_stops <- bind_rows(cur_stops, discon_stops %>% mutate(Year = as.integer(Year))) %>%
+  sf::st_drop_geometry() %>%
+  filter(Province == obs_ON_1991$StateNum %>% unique()) %>%
+  # add country code to province route code for joining
+  mutate(RTENO = Province*1000 + route +12400000) %>%
+  # There are 2 rows that are identical
+  distinct()
+
+# check there is one record for each route, stop combo
+test <- ON_stops %>% sf::st_drop_geometry() %>% group_by(RTENO, Stop) %>%
+  mutate(n = n()) %>%
+  filter(n > 1)
+
+# keep the first occurrence of each route stop combo. Will keep current or first
+# of records in discontinued
+ON_stops <- ON_stops  %>% group_by(RTENO, Stop) %>%
+  summarise(across(everything(), first))
+
+obs_ON_1991_stops <- obs_ON_1991_2 %>%
+  mutate(RTENO = as.numeric(RTENO), Stop = as.numeric(stringr::str_extract(Stop, "\\d\\d?"))) %>%
+  left_join(ON_stops %>% select(RTENO, Stop, POINT_X, POINT_Y),
+            by = c("RTENO", "Stop"))
+
+
 # Step 3: #=====================================================================
 # Get time since sunrise for each stop on the route based on start and
 # end times and number of stops
+
+# get total time for route and assume each stop same length
+obs_ON_1991_stops_2 <- obs_ON_1991_stops %>% ungroup() %>%
+  mutate(StartTime = lubridate::ymd_hm(paste(Date, StartTime)),
+         EndTime = lubridate::ymd_hm(paste(Date, EndTime)),
+         totTime = EndTime - StartTime) %>%
+  group_by(RTENO, Year) %>%
+  arrange(Stop) %>%
+  mutate(nStops = n(), stopInc = 1:n(), incTime = totTime/nStops,
+         stopTime1 = StartTime + (stopInc - 1) * incTime,
+         stopTime2 = StartTime + (stopInc) * incTime)
+
 
 # Step 4: #=====================================================================
 # Calculate offsets. Requires data and functions from this github
