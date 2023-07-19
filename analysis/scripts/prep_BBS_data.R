@@ -14,6 +14,9 @@ quality_filter <- "RunType == 1"
 
 juris <- "ontario"
 
+# Bird Conservation Regions to filter to
+bcrs <- c(7,8)
+
 options(reproducible.cachePath = "analysis/data/cache_data")
 
 # Step 1: #=====================================================================
@@ -35,6 +38,7 @@ obs_ON_1991 <- Cache(munge_bbs_data(
 ))
 
 obs_ON_1991_2 <- obs_ON_1991 %>%
+  filter(BCR %in% bcrs) %>%
   filter(!!rlang::parse_expr(quality_filter)) %>%
   # get 4 letter codes for sp names
   left_join(species_list %>% select(AOU, AOU4), by = "AOU") %>%
@@ -84,21 +88,70 @@ obs_ON_1991_stops <- obs_ON_1991_2 %>%
             by = c("RTENO", "Stop"))
 
 
+# check for NA coords
+missing <- obs_ON_1991_stops %>% filter(is.na(POINT_X)) %>% pull(Route) %>% unique()
+
+# 6 discontinued routes don't have coords for each stop, just have start and end
+# below I fill from the first stop for sunrise and take mean forest based on
+# stops 1 and 50
+
+
 # Step 3: #=====================================================================
+# Covariates for calculating offsets
+# Need time since sunrise (TSSR), ordinal day, and proportion forest, since BBS
+# is always on roads don't need to do that
+
 # Get time since sunrise for each stop on the route based on start and
 # end times and number of stops
 
-# get total time for route and assume each stop same length
+# get total time for route and assume each stop same length, use to get TSSR for each
 obs_ON_1991_stops_2 <- obs_ON_1991_stops %>% ungroup() %>%
-  mutate(StartTime = lubridate::ymd_hm(paste(Date, StartTime)),
-         EndTime = lubridate::ymd_hm(paste(Date, EndTime)),
+  mutate(timez = lutz::tz_lookup_coords(POINT_Y, POINT_X, method = "accurate")) %>%
+  # fill in tz for ones that are NA coords
+  arrange(RTENO, Year, Stop) %>%
+  group_by(RTENO, Year) %>%
+  tidyr::fill(timez) %>%
+  group_by(timez) %>%
+  mutate(StartTime = lubridate::ymd_hm(paste(Date, StartTime), tz = first(timez)),
+         EndTime = lubridate::ymd_hm(paste(Date, EndTime), tz = first(timez)),
          totTime = EndTime - StartTime) %>%
   group_by(RTENO, Year) %>%
-  arrange(Stop) %>%
   mutate(nStops = n(), stopInc = 1:n(), incTime = totTime/nStops,
          stopTime1 = StartTime + (stopInc - 1) * incTime,
-         stopTime2 = StartTime + (stopInc) * incTime)
+         stopTime2 = StartTime + (stopInc) * incTime) %>%
+  ungroup() %>%
+  mutate(sunrise = suncalc::getSunlightTimes(
+    data = data.frame(date = Date, lon = POINT_X, lat = POINT_Y),
+    keep = "sunrise")$sunrise) %>%
+  group_by(RTENO, Year) %>%
+  tidyr::fill(sunrise) %>%
+  ungroup() %>%
+  mutate(tssr = difftime(stopTime1, sunrise, units = "hours"),
+         od = lubridate::yday(Date))
 
+# Use tree cover, 1km^2 resolution data stored in borealbirds/qpad-offsets repo
+SA <- bind_rows(cur_stops, discon_stops %>% mutate(Year = as.integer(Year)))
+
+tree <- reproducible::prepInputs(url = "https://raw.githubusercontent.com/borealbirds/qpad-offsets/main/data/tree.tif",
+                                destinationPath = "analysis/data/raw_data/",
+                                writeTo = NULL)
+
+tree <- terra::subst(tree, from = c(254, 255), c(NA, 0))
+
+obs_tree <- terra::extract(tree, obs_ON_1991_stops_2 %>%
+                            filter(!is.na(POINT_X)) %>%
+                            sf::st_as_sf(coords = c("POINT_X", "POINT_Y"),
+                                         crs = 4326) %>%
+                            sf::st_transform(sf::st_crs(lcc)) %>%
+                            terra::vect())
+url_nalcms_2020_Can <- "http://www.cec.org/files/atlas_layers/1_terrestrial_ecosystems/1_01_0_land_cover_2020_30m/can_land_cover_2020_30m_tif.zip"
+nalcms_2020_Can <- reproducible::prepInputs(url = url_nalcms_2020_Can,
+                                            destinationPath = "analysis/data/raw_data/",
+                                            writeTo = NULL)
+
+# Crop and convert to prop forest in 5x5 window
+for_cov <- nalcms_2020_Can %>%
+  terra::classify()
 
 # Step 4: #=====================================================================
 # Calculate offsets. Requires data and functions from this github
