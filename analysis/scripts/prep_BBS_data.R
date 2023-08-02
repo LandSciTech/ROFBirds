@@ -5,6 +5,7 @@
 library(bbsAssistant)
 library(dplyr)
 library(reproducible)
+library(napops)
 
 # Set parameters for script
 start_yr <- 1991
@@ -64,6 +65,16 @@ cur_stops <- sf::st_read("analysis/data/raw_data/BBS Routes_CurrentStops_Discont
 discon_stops <- sf::st_read("analysis/data/raw_data/BBS Routes_CurrentStops_Discontinued.gdb",
                          layer = "DISCONTINUED_STOPS")
 
+# bbox is wrong in discon_stops
+new_bb <- discon_stops %>% sf::st_drop_geometry() %>%
+  summarise(across(c(POINT_X, POINT_Y), lst(min, max), na.rm = TRUE)) %>%
+  select(xmin = POINT_X_min, ymin = POINT_Y_min, xmax = POINT_X_max,
+         ymax = POINT_Y_max) %>% unlist()
+
+attr(new_bb, "class") <-  "bbox"
+
+attr(sf::st_geometry(discon_stops), "bbox") <-  new_bb
+
 ON_stops <- bind_rows(cur_stops, discon_stops %>% mutate(Year = as.integer(Year))) %>%
   sf::st_drop_geometry() %>%
   filter(Province == obs_ON_1991$StateNum %>% unique()) %>%
@@ -86,7 +97,6 @@ obs_ON_1991_stops <- obs_ON_1991_2 %>%
   mutate(RTENO = as.numeric(RTENO), Stop = as.numeric(stringr::str_extract(Stop, "\\d\\d?"))) %>%
   left_join(ON_stops %>% select(RTENO, Stop, POINT_X, POINT_Y),
             by = c("RTENO", "Stop"))
-
 
 # check for NA coords
 missing <- obs_ON_1991_stops %>% filter(is.na(POINT_X)) %>% pull(Route) %>% unique()
@@ -130,36 +140,95 @@ obs_ON_1991_stops_2 <- obs_ON_1991_stops %>% ungroup() %>%
          od = lubridate::yday(Date))
 
 # Use tree cover, 1km^2 resolution data stored in borealbirds/qpad-offsets repo
-SA <- bind_rows(cur_stops, discon_stops %>% mutate(Year = as.integer(Year)))
+# tree <- reproducible::prepInputs(url = "https://raw.githubusercontent.com/borealbirds/qpad-offsets/main/data/tree.tif",
+#                                 destinationPath = "analysis/data/raw_data/",
+#                                 writeTo = NULL)
+#
+# tree <- terra::subst(tree, from = c(254, 255), c(NA, 0))
+#
+# obs_tree <- terra::extract(tree, obs_ON_1991_stops_2 %>%
+#                             filter(!is.na(POINT_X)) %>%
+#                             sf::st_as_sf(coords = c("POINT_X", "POINT_Y"),
+#                                          crs = 4326) %>%
+#                             sf::st_transform(sf::st_crs(tree)) %>%
+#                             terra::vect())
 
-tree <- reproducible::prepInputs(url = "https://raw.githubusercontent.com/borealbirds/qpad-offsets/main/data/tree.tif",
-                                destinationPath = "analysis/data/raw_data/",
-                                writeTo = NULL)
-
-tree <- terra::subst(tree, from = c(254, 255), c(NA, 0))
-
-obs_tree <- terra::extract(tree, obs_ON_1991_stops_2 %>%
-                            filter(!is.na(POINT_X)) %>%
-                            sf::st_as_sf(coords = c("POINT_X", "POINT_Y"),
-                                         crs = 4326) %>%
-                            sf::st_transform(sf::st_crs(lcc)) %>%
-                            terra::vect())
+# Use NALCMS data same as napops paper. I am using 2020 data could in theory use
+# version closest to actual year of data collection
 url_nalcms_2020_Can <- "http://www.cec.org/files/atlas_layers/1_terrestrial_ecosystems/1_01_0_land_cover_2020_30m/can_land_cover_2020_30m_tif.zip"
 nalcms_2020_Can <- reproducible::prepInputs(url = url_nalcms_2020_Can,
                                             destinationPath = "analysis/data/raw_data/",
                                             writeTo = NULL)
 
+lcc_lu <- tibble::tribble(
+  ~from, ~to, ~becomes,
+  1,       2,        1,
+  5,       6,        1)
+
+# get boundary of bird data + ~2000m so window doesn't include edges
+SA <- ON_stops %>% ungroup() %>%
+  summarise(across(c(POINT_X, POINT_Y), lst(min, max), na.rm = TRUE)) %>%
+  select(xmin = POINT_X_min, ymin = POINT_Y_min, xmax = POINT_X_max,
+         ymax = POINT_Y_max) %>% unlist() %>%
+  sf::st_bbox() %>%
+  {. + 0.02} %>%
+  sf::st_set_crs(sf::st_crs(cur_stops)) %>%
+  sf::st_as_sfc() %>%
+  sf::st_transform(sf::st_crs(nalcms_2020_Can))
+
 # Crop and convert to prop forest in 5x5 window
-for_cov <- nalcms_2020_Can %>%
-  terra::classify()
+for_cov <- Cache(nalcms_2020_Can %>%
+  terra::crop(terra::vect(SA)) %>%
+  terra::classify(rcl = lcc_lu, others = 0, right = NA))
+
+for_cov150 <- Cache(terra::focal(for_cov, w = 5, fun = "mean"))
+
+obs_for_cov <- obs_ON_1991_stops_2 %>% filter(!is.na(POINT_X)) %>%
+  select(RTENO, Year, Stop, POINT_X, POINT_Y) %>%
+  sf::st_as_sf(coords = c("POINT_X", "POINT_Y"),
+               crs = sf::st_crs(cur_stops)) %>%
+  sf::st_transform(sf::st_crs(nalcms_2020_Can)) %>%
+  {terra::extract(for_cov150, ., bind = TRUE)} %>%
+  sf::st_as_sf() %>%
+  sf::st_drop_geometry() %>%
+  rename(for_cov = focal_mean)
+
+# join to forest cover and calculate average from first and last stop when stop
+# coords are missing
+obs_ON_1991_stops_3 <- obs_ON_1991_stops_2 %>%
+  left_join(obs_for_cov, by = join_by(RTENO, Year, Stop)) %>%
+  group_by(RTENO, Year) %>%
+  mutate(mean_for_cov = mean(for_cov, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(for_cov = coalesce(for_cov, mean_for_cov))
+
 
 # Step 4: #=====================================================================
-# Calculate offsets. Requires data and functions from this github
-# repository: https://github.com/borealbirds/qpad-offsets/tree/main. This has
-# been updated by BAM from the one they used originally. This uses species specific
-# coefficients stored in the QPAD project to determine the offset using raster
-# datasets provided in the repository.
+# Calculate offsets using napops package
+# A is the known or estimated area of survey, p is availability given presence, q is detectability given avaibalility.
+# offset=log(A) + log(p) + log(q)
+obs_ON_1991_offsets <- obs_ON_1991_stops_3 %>%
+  select(-c(
+    Active, Latitude, Longitude, Stratum, BCR, RouteTypeID, RouteTypeDetailID,
+    ObsN, Month, Day, StartTemp, EndTemp, TempScale, StartWind, EndWind,
+    StartSky, EndSky, StartTime, EndTime, WindMean, TempMean, timez, totTime,
+    nStops, stopInc, incTime, stopTime1, stopTime2, sunrise, mean_for_cov)) %>%
+  mutate(tssr = as.numeric(tssr)) %>%
+  tidyr::pivot_longer(-c(CountryNum, StateNum, Route, RPID, Year, RTENO, RouteName,
+                  Date, Stop, POINT_X, POINT_Y, tssr, od, for_cov),
+               names_to = "species", values_to = "count") %>%
+  filter(count != 0) %>%
+  slice(1:1000)
 
+out <- obs_ON_1991_offsets %>% group_by(species) %>%
+  mutate(on_road = TRUE,
+    p = napops::avail(unique(species), model = "best", od, tssr, time = 3,
+                           pairwise = TRUE),
+         q = napops::percept(unique(species), model = "best", road = on_road,
+                             forest = for_cov,
+                             distance = 400, pairwise = TRUE))
 
+# current version of avail and percept are very slow and throw errors if more
+# than one species. one speed up issue submitted considering another one.
 
 
