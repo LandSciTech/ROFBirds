@@ -38,11 +38,24 @@ obs_ON_1991 <- Cache(munge_bbs_data(
   keep.stop.level.data = TRUE
 ))
 
-obs_ON_1991_2 <- obs_ON_1991 %>%
+# species list from bbsAssistant is missing some species codes also add napops
+# based AOU4
+napop_sp <- napops::list_species()
+
+species_list <- dplyr::full_join(
+  species_list,
+  napop_sp %>% select(-c(Removal, Distance, Family), AOU4_2 = Species),
+  by = c(English_Common_Name = "Common_Name", "Scientific_Name")
+) %>%
+  dplyr::mutate(AOU4 = dplyr::coalesce(AOU4, AOU4_2), .keep = "unused")
+
+obs_ON_1991_2a <- obs_ON_1991 %>%
   filter(BCR %in% bcrs) %>%
   filter(!!rlang::parse_expr(quality_filter)) %>%
   # get 4 letter codes for sp names
-  left_join(species_list %>% select(AOU, AOU4), by = "AOU") %>%
+  left_join(species_list %>% select(AOU, AOU4), by = "AOU")
+
+obs_ON_1991_2 <- obs_ON_1991_2a %>%
   # Some are missing so keep numeric codes for those
   mutate(sp_code = coalesce(AOU4, as.character(AOU)), .keep = "unused") %>%
   select(-contains("Car"), -contains("Noise"), -RouteTotal, -TotalSpp,
@@ -52,6 +65,13 @@ obs_ON_1991_2 <- obs_ON_1991 %>%
   filter(Abund != 0) %>%
   tidyr::pivot_wider(names_from = sp_code, values_from = Abund, values_fill = 0)
 
+# flag species not matched to codes and check against napops species list as well
+no_match_aou <- obs_ON_1991_2a %>% filter(is.na(AOU4)) %>% pull(AOU) %>% unique()
+
+# still several not matching that should be eg double crested cormorant
+filter(species_list, AOU %in% no_match_aou)
+
+# TODO should species be grouped from subspecies to species for offsetting?
 
 # Step 2: #=====================================================================
 # Get locations of each stop on the routes from data supplied by CWS, not
@@ -205,6 +225,21 @@ obs_ON_1991_stops_3 <- obs_ON_1991_stops_2 %>%
 
 # Step 4: #=====================================================================
 # Calculate offsets using napops package
+
+# Needs to be available in order for faster versions of functions to work
+# preloading a table of species min, max median for each model type
+sp_tbl <- list_species()
+
+sum_covs <- function(df){
+  df %>%
+    summarise(across(-c(Species, Survey_Method), lst(min, max, median)))
+}
+
+all_cov_tbl <- Cache(sp_tbl %>% rowwise() %>%
+                       mutate(sum_covs(covariates_removal(Species)),
+                              sum_covs(covariates_distance(Species))))
+
+
 # A is the known or estimated area of survey, p is availability given presence, q is detectability given avaibalility.
 # offset=log(A) + log(p) + log(q)
 obs_ON_1991_offsets <- obs_ON_1991_stops_3 %>%
@@ -217,18 +252,37 @@ obs_ON_1991_offsets <- obs_ON_1991_stops_3 %>%
   tidyr::pivot_longer(-c(CountryNum, StateNum, Route, RPID, Year, RTENO, RouteName,
                   Date, Stop, POINT_X, POINT_Y, tssr, od, for_cov),
                names_to = "species", values_to = "count") %>%
-  filter(count != 0) %>%
-  slice(1:1000)
-
-out <- obs_ON_1991_offsets %>% group_by(species) %>%
-  mutate(on_road = TRUE,
-    p = napops::avail(unique(species), model = "best", od, tssr, time = 3,
-                           pairwise = TRUE),
-         q = napops::percept(unique(species), model = "best", road = on_road,
-                             forest = for_cov,
-                             distance = 400, pairwise = TRUE))
+  filter(count != 0)  %>% group_by(species) %>%
+  mutate(
+    on_road = TRUE,
+    cr_est = cue_rate3(unique(species), model = "best", od, tssr,
+                       pairwise = TRUE) %>% pull(CR_est),
+    edr_est = edr2(unique(species), model = "best", road = on_road, forest = for_cov,
+                   pairwise = TRUE) %>% pull(EDR_est),
+    # doing these calculations manually since avail and percept funs were to slow
+    avail_est = 1 - exp(-3 * cr_est),
+    percept_est = (pi * edr_est^2 * (1 - exp(-400^2/edr_est^2)))/(pi * 400^2),
+    area = pi*400^2,
+    correction = area*avail_est*percept_est,
+    offset = log(correction)
+  )
 
 # current version of avail and percept are very slow and throw errors if more
-# than one species. one speed up issue submitted considering another one.
+# than one species. Have submitted issues for speed up of avail (cue_rate)
 
 
+
+
+# checking vs old version
+out2 <- obs_ON_1991_offsets %>% group_by(species) %>%
+  mutate(on_road = TRUE,
+         avail_est = avail(unique(species), model = "best", od, tssr,
+                            pairwise = TRUE, time = 3),
+         percept_est = percept(unique(species), model = "best", road = on_road, forest = for_cov,
+                        pairwise = TRUE, distance = 400)
+  )
+identical(out2$avail_est$p, out$avail_est)
+
+# percept is different for species that were not modelled because in original
+# there is a very low value but in mine there is an NA
+all(out2$percept_est$q == out$percept_est, na.rm = TRUE)
