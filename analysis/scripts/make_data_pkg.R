@@ -5,6 +5,8 @@
 
 # Combine pt meta data and observations and save as csv also save offsets
 
+in_dat_pth <- "analysis/data/derived_data"
+
 # load data that BAM prepared and rename objects to be literate
 # data saved at line 196 Andy_scripts/01-2_create-brt-database.R
 load(file.path(in_dat_pth, "0_data/processed/BAMv6_RoFpackage_2022-01.RData"),
