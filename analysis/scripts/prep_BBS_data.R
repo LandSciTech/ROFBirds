@@ -1,4 +1,4 @@
-# there were some issues in bbsAssistant pacakge but it does not appear to be
+# there were some issues in bbsAssistant pacakage but it does not appear to be
 # actively maintained. So install from my fork
 # remotes::install_github("see24/bbsAssistant", ref = "fix-QualityCurrentID-filter")
 
@@ -38,26 +38,36 @@ obs_ON_1991 <- Cache(munge_bbs_data(
   keep.stop.level.data = TRUE
 ))
 
-# species list from bbsAssistant is missing some species codes also add napops
-# based AOU4
+# species napops
 napop_sp <- napops::list_species()
 
-species_list <- dplyr::full_join(
-  species_list,
-  napop_sp %>% select(-c(Removal, Distance, Family), AOU4_2 = Species),
-  by = c(English_Common_Name = "Common_Name", "Scientific_Name")
-) %>%
-  dplyr::mutate(AOU4 = dplyr::coalesce(AOU4, AOU4_2), .keep = "unused")
+# Use ECCC Avian Core database from
+# https://ecollab.ncr.int.ec.gc.ca/theme/cws-scf/MBECAvianTaxonomicDatabase/Forms/AllItems.aspx
+av_core <- readxl::read_xlsx("analysis/data/raw_data/ECCC_Avian_Taxonomic_Database/ECCC Avian Core 20230601.xlsx")
+
+av_core <- av_core %>%
+  select(Species_ID, Parent_ID, Full_Species, English_Name, Scientific_Name,
+         Prev_Species_ID, BBS_Number) %>%
+  # napops does not include subspecies so they should be grouped with parent
+  mutate(Species_ID = coalesce(Parent_ID, Species_ID))
+
+# Use av_core to connect AOU codes in bbs to 4 letter codes in napops
+sp_lu_tbl <- bbs_raw$species_list %>%
+  select(AOU, English_Common_Name, Scientific_Name, AOU4) %>%
+  left_join(av_core, by = c(AOU = "BBS_Number")) %>%
+  full_join(napop_sp, by = c(Species_ID = "Species")) %>%
+  mutate(Scientific_Name = coalesce(Scientific_Name.x, Scientific_Name.y,
+                                    Scientific_Name), .keep = "unused")
 
 obs_ON_1991_2a <- obs_ON_1991 %>%
   filter(BCR %in% bcrs) %>%
   filter(!!rlang::parse_expr(quality_filter)) %>%
   # get 4 letter codes for sp names
-  left_join(species_list %>% select(AOU, AOU4), by = "AOU")
+  left_join(sp_lu_tbl %>% select(AOU, Species_ID), by = "AOU")
 
 obs_ON_1991_2 <- obs_ON_1991_2a %>%
   # Some are missing so keep numeric codes for those
-  mutate(sp_code = coalesce(AOU4, as.character(AOU)), .keep = "unused") %>%
+  mutate(sp_code = coalesce(Species_ID, as.character(AOU)), .keep = "unused") %>%
   select(-contains("Car"), -contains("Noise"), -RouteTotal, -TotalSpp,
          -contains("ObsFirstYear"), -Assistant, -RunType, -QualityCurrentID,
          -julian) %>%
@@ -66,12 +76,10 @@ obs_ON_1991_2 <- obs_ON_1991_2a %>%
   tidyr::pivot_wider(names_from = sp_code, values_from = Abund, values_fill = 0)
 
 # flag species not matched to codes and check against napops species list as well
-no_match_aou <- obs_ON_1991_2a %>% filter(is.na(AOU4)) %>% pull(AOU) %>% unique()
+no_match_aou <- obs_ON_1991_2a %>% filter(is.na(Species_ID)) %>% pull(AOU) %>% unique()
 
-# still several not matching that should be eg double crested cormorant
-filter(species_list, AOU %in% no_match_aou)
-
-# TODO should species be grouped from subspecies to species for offsetting?
+filter(species_list, AOU %in% no_match_aou) %>% select(-Spanish_Common_Name) %>%
+  {stopifnot(nrow(.) == 0)}
 
 # Step 2: #=====================================================================
 # Get locations of each stop on the routes from data supplied by CWS, not
@@ -270,6 +278,7 @@ obs_ON_1991_offsets <- obs_ON_1991_stops_3 %>%
 # current version of avail and percept are very slow and throw errors if more
 # than one species. Have submitted issues for speed up of avail (cue_rate)
 
+# Many warnings are because napops only included landbirds so many have NA offsets
 
 
 
