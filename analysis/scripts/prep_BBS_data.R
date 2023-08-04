@@ -280,18 +280,25 @@ obs_ON_1991_offsets <- obs_ON_1991_stops_3 %>%
 
 # Many warnings are because napops only included landbirds so many have NA offsets
 
+# TODO: investigate whether the offsets make sense. Ours have a much wider range
+# than the ones from BAM did: (-8.6, 11.3) and (-4.3  2.3), respectively.
 
+# Try comparing mean offset by species
+colMeans(sp_off) %>% as_tibble(rownames = "species") %>%
+  mutate(species = forcats::fct_reorder(species, value)) %>%
+  ggplot(aes(species, value))+
+  geom_col()+coord_flip()
 
-# checking vs old version
-out2 <- obs_ON_1991_offsets %>% group_by(species) %>%
-  mutate(on_road = TRUE,
-         avail_est = avail(unique(species), model = "best", od, tssr,
-                            pairwise = TRUE, time = 3),
-         percept_est = percept(unique(species), model = "best", road = on_road, forest = for_cov,
-                        pairwise = TRUE, distance = 400)
-  )
-identical(out2$avail_est$p, out$avail_est)
+obs_ON_1991_offsets %>% select(RTENO, Year, Stop, species, offset) %>%
+  tidyr::pivot_wider(names_from = species, values_from = offset) %>%
+  select(-c(RTENO, Year, Stop)) %>%
+  colMeans(na.rm = TRUE) %>% as_tibble(rownames = "species") %>%
+  filter(!is.na(value)) %>%
+  mutate(species = forcats::fct_reorder(species, value))%>%
+  ggplot(aes(species, value))+
+  geom_col()+
+  coord_flip()
 
-# percept is different for species that were not modelled because in original
-# there is a very low value but in mine there is an NA
-all(out2$percept_est$q == out$percept_est, na.rm = TRUE)
+# CORE common redpole has an extremely low offset compared to the rest (~-8 vs
+# ~6) other wise the napops offsets are much higher than the BAM ones but have a
+# similar distribution and a few species I checked are on similar sides of it
