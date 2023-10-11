@@ -155,7 +155,7 @@ cue_rate3 <- function (species = NULL, model = NULL, od = NULL, tssr = NULL,
 
 # Version using loaded table
 # also returns dataframe with all NA if species not valid
-# and changes result so the CR_est is a numeric not an array
+# and changes result so is a numeric not an array
 # Note: not tested with quantiles
 edr2 <- function (species = NULL, model = NULL, road = NULL, forest = NULL,
                   pairwise = FALSE, quantiles = NULL, samples = 1000) {

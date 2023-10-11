@@ -95,7 +95,9 @@ discon_stops <- sf::st_read("analysis/data/raw_data/BBS Routes_CurrentStops_Disc
 
 # bbox is wrong in discon_stops
 new_bb <- discon_stops %>% sf::st_drop_geometry() %>%
-  summarise(across(c(POINT_X, POINT_Y), lst(min, max), na.rm = TRUE)) %>%
+  summarise(across(c(POINT_X, POINT_Y),
+                   lst(min = \(x){min(x, na.rm = TRUE)},
+                       max = \(x){max(x, na.rm = TRUE)}))) %>%
   select(xmin = POINT_X_min, ymin = POINT_Y_min, xmax = POINT_X_max,
          ymax = POINT_Y_max) %>% unlist()
 
@@ -250,7 +252,7 @@ all_cov_tbl <- Cache(sp_tbl %>% rowwise() %>%
 
 # A is the known or estimated area of survey, p is availability given presence, q is detectability given avaibalility.
 # offset=log(A) + log(p) + log(q)
-obs_ON_1991_offsets <- obs_ON_1991_stops_3 %>%
+obs_ON_1991_offsets_a <- obs_ON_1991_stops_3 %>%
   select(-c(
     Active, Latitude, Longitude, Stratum, BCR, RouteTypeID, RouteTypeDetailID,
     ObsN, Month, Day, StartTemp, EndTemp, TempScale, StartWind, EndWind,
@@ -260,7 +262,9 @@ obs_ON_1991_offsets <- obs_ON_1991_stops_3 %>%
   tidyr::pivot_longer(-c(CountryNum, StateNum, Route, RPID, Year, RTENO, RouteName,
                   Date, Stop, POINT_X, POINT_Y, tssr, od, for_cov),
                names_to = "species", values_to = "count") %>%
-  filter(count != 0)  %>% group_by(species) %>%
+  filter(count != 0)
+
+obs_ON_1991_offsets <- obs_ON_1991_offsets_a %>% group_by(species) %>%
   mutate(
     on_road = TRUE,
     cr_est = cue_rate3(unique(species), model = "best", od, tssr,
@@ -278,18 +282,43 @@ obs_ON_1991_offsets <- obs_ON_1991_stops_3 %>%
 # current version of avail and percept are very slow and throw errors if more
 # than one species. Have submitted issues for speed up of avail (cue_rate)
 
-# Many warnings are because napops only included landbirds so many have NA offsets
+# Many warnings are because napops only includs landbirds so many have NA offsets
+
+test <- obs_ON_1991_offsets_a %>% ungroup() %>% slice(1:10) %>% group_by(species) %>%
+  mutate(on_road = TRUE,
+         edr_est = edr(unique(species), model = "best", road = on_road,
+                       forest = for_cov, pairwise = TRUE) %>% pull(EDR_est) %>% .[1],
+         avail_est = avail(unique(species), model = "best", od = od, tssr = tssr,
+                           pairwise = TRUE, time = 3) %>% pull(p),
+         percept_est = percept(unique(species), model = "best", road = on_road,
+                              forest = for_cov, distance = 400,
+                              pairwise = TRUE) %>% pull(q)) %>%
+  ungroup() %>%
+  mutate(my_avail = obs_ON_1991_offsets$avail_est[1:10],
+         my_percept = obs_ON_1991_offsets$percept_est[1:10],
+         my_edr = obs_ON_1991_offsets$edr_est[1:10]) %>%
+  select(species, matches("avail"), matches("percept"), matches("edr"))
+
 
 # TODO: investigate whether the offsets make sense. Ours have a much wider range
-# than the ones from BAM did: (-8.6, 11.3) and (-4.3  2.3), respectively.
+# than the ones from BAM did: (-8.6, 11.3) and (-4.3  2.3), respectively. Have
+# investigated the formulas and checked for any difference with the native
+# napops functions and found none. I also compared visually with the NA-POPS
+# dashboard and the values for avail and percept seem similar.
+
+bamEnv <- new.env()
+load(file.path(in_dat_pth, "0_data/processed/BAMv6_RoFpackage_2022-01.RData"),
+     envir = bamEnv)
+
+sp_off <- get("off", envir = bamEnv)
 
 # Try comparing mean offset by species
-colMeans(sp_off) %>% as_tibble(rownames = "species") %>%
+bam_off_plt <- colMeans(sp_off) %>% as_tibble(rownames = "species") %>%
   mutate(species = forcats::fct_reorder(species, value)) %>%
   ggplot(aes(species, value))+
   geom_col()+coord_flip()
 
-obs_ON_1991_offsets %>% select(RTENO, Year, Stop, species, offset) %>%
+na_pop_off_plt <- obs_ON_1991_offsets %>% select(RTENO, Year, Stop, species, offset) %>%
   tidyr::pivot_wider(names_from = species, values_from = offset) %>%
   select(-c(RTENO, Year, Stop)) %>%
   colMeans(na.rm = TRUE) %>% as_tibble(rownames = "species") %>%
@@ -302,3 +331,8 @@ obs_ON_1991_offsets %>% select(RTENO, Year, Stop, species, offset) %>%
 # CORE common redpole has an extremely low offset compared to the rest (~-8 vs
 # ~6) other wise the napops offsets are much higher than the BAM ones but have a
 # similar distribution and a few species I checked are on similar sides of it
+
+off_comp_plt <- ggpubr::ggarrange(bam_off_plt+ggtitle("BAM"),
+                                  na_pop_off_plt+ggtitle("NA-POPS"))
+ggsave("analysis/figures/compare_offsets_BAM_NAPOP.pdf", height = 15, width = 7,
+       units = "in")

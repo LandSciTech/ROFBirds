@@ -1,7 +1,7 @@
 Package: ROFBirds
 Title: What the Package Does (One Line, Title Case)
 Version: 0.0.0.9000
-Authors@R:
+Authors@R: 
     person("Sarah", "Endicott", , "sarah.endicott@canada.ca", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0001-9644-5343"))
 Description: What the package does (one paragraph).
@@ -11,19 +11,58 @@ Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.1.2
-Imports: bookdown,
-    here,
+Imports: 
+    bbsAssistant,
+    caribouMetrics,
+    colorspace,
     data.table (>= 1.14.2),
     dismo (>= 1.3-5),
+    dplyr,
+    fasterize,
+    forcats,
+    fs,
     gbm (>= 2.1.8),
     ggplot2 (>= 3.3.5),
+    ggpubr,
+    ggspatial,
     googledrive (>= 2.0.0),
+    gridExtra,
+    intrval,
     jsonlite (>= 1.7.2),
+    lubridate,
+    lutz,
+    maptools,
     Matrix (>= 1.4-0),
-    mefa,
     mefa4 (>= 0.3-8),
+    napops,
+    purrr,
+    QPAD,
+    rappdirs,
+    raster,
+    rasterVis,
+    RColorBrewer,
+    readxl,
+    remotes,
+    reproducible,
+    reshape2,
+    rgdal,
+    rgeos,
+    rlang,
+    RODBC,
+    rpart,
     segmented,
     sf (>= 1.0-5),
-    sqldf
-Suggests: devtools,
-    git2r
+    sfheaders,
+    sp,
+    spatial,
+    spdep,
+    sqldf,
+    stringr,
+    suncalc,
+    terra,
+    tibble,
+    tidyr,
+    tidyverse,
+    tmap,
+    units,
+    wildRtrax
