@@ -1,3 +1,5 @@
+# functions related to model fitting and covariate preparation
+
 
 #' Run a BRT with cross validation to determine the best ntrees and important
 #' variables

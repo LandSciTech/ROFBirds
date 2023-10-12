@@ -14,7 +14,19 @@ knitr::opts_chunk$set(
 
 # ROFBirds
 
-This repository contains simplified code to run the model fitting and data preparation procedure developed by BAM for birds in the Ring of Fire. The original code for the model fitting and data preparation steps are linked below. 
+This repository contains several projects related to birds in Northern Ontario and the Ring of Fire. 
+
+1) **BAM RoF Bird Models**: Simplified code to run the model fitting and data preparation procedure developed by BAM for birds in the Ring of Fire. *prepare_covariate_data.R* covers the preparation of covariate data, *fit_model.R* covers the fitting of bootsrapped BRT models, and *make_figure.R* creates a map of the study area for the ROF report. The original code for the model fitting and data preparation steps are linked below, and included in the folders Andy_scripts and Lionel_scripts. Data provided from the original BAM analysis is stores under data/derived_data/0_data  
+
+2) **ON Bird Forecasting** Challenge: Scripts to automate the process of creating a package of bird data for use in a bird density forecasting challenge. *prep_BBS_data.R* pulls the most recent BBS data from USGS ScienceBase and calculates offsets using the napops R package. *get_wildTrax_data.R* pulls CWS-ONT projects from wildTrax. Data for these scripts is mostly downloaded by the scripts but some is stored in raw_data. 
+
+## Status (2023-10-12)
+The BAM RoF Bird Model project is complete but may be changed in the future to be incorporated into the bird forecasting challenge. 
+
+ON Bird Forecasting Challenge is in the early stages of development. The prep_BBs_data.R script works but I am not sure about the offsets calculated and have used some custom versions of the napops functions to speed things up. See issues https://github.com/na-pops/napops/issues/5 and https://github.com/na-pops/napops/issues/4. 
+The get_wildTrax_data.R script was working but is not complete. Need to consider whether to keep using napops to calculate offsets or to use the QPAD offsets that are built in to the wildRTrax package. 
+
+
 
 ## Links to BAM code and data
 Downloading and preparing bird data: [Ring-of-Fire-prep-BBS-data](https://drive.google.com/drive/folders/13boRwiTc-j5NDauky2fgQaR99xL1xFIq?usp=sharing)

@@ -274,7 +274,8 @@ obs_ON_1991_offsets <- obs_ON_1991_offsets_a %>% group_by(species) %>%
     # doing these calculations manually since avail and percept funs were to slow
     avail_est = 1 - exp(-3 * cr_est),
     percept_est = (pi * edr_est^2 * (1 - exp(-400^2/edr_est^2)))/(pi * 400^2),
-    area = pi*400^2,
+    # changing to 4 instead of actual distance of 400m makes offsets match QPAD better.
+    area = pi*4^2,
     correction = area*avail_est*percept_est,
     offset = log(correction)
   )
@@ -322,7 +323,7 @@ na_pop_off_plt <- obs_ON_1991_offsets %>% select(RTENO, Year, Stop, species, off
   tidyr::pivot_wider(names_from = species, values_from = offset) %>%
   select(-c(RTENO, Year, Stop)) %>%
   colMeans(na.rm = TRUE) %>% as_tibble(rownames = "species") %>%
-  filter(!is.na(value)) %>%
+  filter(!is.na(value), species != "CORE") %>%
   mutate(species = forcats::fct_reorder(species, value))%>%
   ggplot(aes(species, value))+
   geom_col()+
