@@ -1,4 +1,4 @@
-# there were some issues in bbsAssistant pacakage but it does not appear to be
+# there were some issues in bbsAssistant package but it does not appear to be
 # actively maintained. So install from my fork
 # remotes::install_github("see24/bbsAssistant", ref = "fix-QualityCurrentID-filter")
 
