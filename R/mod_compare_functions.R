@@ -53,7 +53,7 @@ do_sp_compare <- function(sp6, sp4 = "XXXX", samp_pts, in_dat_pth){
   cat(paste0("\n\n## ", sp6, "\n\n"))
 
   pats <- list(bateman = paste0(sp6, ".*_breeding.*suitability.tif$"),
-               # bam_rof = paste0(sp4, ".*mean.tif$"),
+               bam_rof = paste0(sp4, ".tif$"),
                bam_nat = paste0(sp4, ".*CAN-Mean.tif$"),
                ebird_st = paste0(sp6, "_abundance.*.tif"))
 

@@ -59,6 +59,9 @@ code4 <- list.files(file.path(in_dat_pth1, "Bateman_2020_sdms"),
 
 sp_codes <- tibble(code4, code6)
 
+# There was a problem with chispa raster so I downloaded the one from the
+# website manually
+
 # currently BAM nat only has species from A-E, have emailed to check
 sp_BAM_nat <- list.files(file.path(in_dat_pth1, "BAM_v4_National"),
                          pattern = "pred.*CAN-Mean.tif",
@@ -66,10 +69,24 @@ sp_BAM_nat <- list.files(file.path(in_dat_pth1, "BAM_v4_National"),
   str_extract("(pred-)(....)(-CAN-Mean.tif)", group = 2) %>%
   tibble::as_tibble_col(column_name = "bam_nat")
 
+sp_BAM_rof <- list.files(file.path(in_dat_pth1, "BAM_ROF"),
+                         pattern = "^.....tif",
+                         recursive = TRUE) %>%
+  str_extract("(....)(.tif)", group = 1) %>%
+  tibble::as_tibble_col(column_name = "bam_rof")
+
 all_sp_codes <- full_join(sp_codes, sp_BAM_nat, by = c(code4 = "bam_nat"),
                           keep = TRUE) %>%
+  full_join(sp_BAM_rof, by = c(code4 = "bam_rof"), keep = TRUE) %>%
   left_join(ebirdst::ebirdst_runs %>% select(species_code),
-            by = c(code6 = "species_code"), keep = TRUE)
+            by = c(code6 = "species_code"), keep = TRUE) %>%
+  arrange(code6)
+
+bat_grps <- read.csv(file.path(in_dat_pth1, "Bateman_2020_sdms/spp_names_codes_group.csv"))
+
+mis_codes <- all_sp_codes %>% filter(is.na(code6), !is.na(bam_rof)) %>% pull(bam_rof)
+
+bat_grps %>% filter(Code %in% mis_codes) %>% count(Group)
 
 # Only keep species in both Bateman boreal/eastern forests and generalists,
 # ebird status and trends, and BAM national
@@ -94,20 +111,21 @@ samp_pts1 <- terra::spatSample(terra::vect(study_area), size = samp_size,
 # do_sp_compare("aldfly", "ALFL", samp_pts = samp_pts1, in_dat_pth = in_dat_pth1)
 
 #+ results='asis', fig.height=6, fig.width=7, warning=FALSE
+do_sp_compare_pos <- possibly(do_sp_compare, otherwise = data.frame(ID = NA), quiet = FALSE)
 
 out <- map2(sp_code_use$code6, sp_code_use$code4,
-            \(x, y) do_sp_compare(x, y, samp_pts = samp_pts1, in_dat_pth = in_dat_pth1)) %>%
-  bind_rows(.id = "species")
+            \(x, y) do_sp_compare_pos(x, y, samp_pts = samp_pts1, in_dat_pth = in_dat_pth1)) %>%
+  bind_rows()
 
 
 #' ## Table
-out %>% group_by(species) %>%
-  summarise(mean_rank_sd = mean(rank_sd, na.rm = TRUE) %>% round(2)) %>%
+out %>% group_by(sp4, sp6) %>%
+  summarise(mean_rank_sd = mean(rank_sd, na.rm = TRUE) %>% round(2), .groups = "drop") %>%
   DT::datatable()
 
-write.csv(out, "analysis/data/derived_data/model_compare.csv")
+write.csv(out, "analysis/data/derived_data/model_compare.csv", row.names = FALSE)
 
-# rmarkdown::render("analysis/scripts/compare_model_predictions.R",
-#                   knit_root_dir = here::here(), envir = new.env())
+rmarkdown::render("analysis/scripts/compare_model_predictions.R",
+                  knit_root_dir = here::here(), envir = new.env())
 
-# problem loading ebird in row 38
+
