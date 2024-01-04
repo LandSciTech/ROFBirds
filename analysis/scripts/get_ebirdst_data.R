@@ -20,8 +20,8 @@ code6 <- list.files(file.path(in_dat_pth, "Bateman_2020_sdms"),
 # Only keep species in both Bateman boreal forests and ebird status and trends
 code6 <- intersect(code6, ebirdst::ebirdst_runs$species_code)
 
-
-
+# check which are already downloaded
+code6 <- setdiff(code6, list.files(file.path(in_dat_pth, "eBird_SandT/2021")))
 
 purrr::map(code6, \(x){ebirdst_download(x, pattern = "abundance_.*_mean_hr",
                                         path = file.path(in_dat_pth, "eBird_SandT"))})

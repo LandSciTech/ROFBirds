@@ -48,7 +48,7 @@ extract_transform <- function(ras, pts){
 #'
 #' @return Prints species code, maps and comparison graphs
 
-do_sp_compare <- function(sp6, sp4 = "XXXX", samp_pts, in_dat_pth){
+do_sp_compare <- function(sp6, sp4 = "XXXX", samp_pts, val_dat, in_dat_pth){
 
   cat(paste0("\n\n## ", sp6, "\n\n"))
 
@@ -108,7 +108,52 @@ do_sp_compare <- function(sp6, sp4 = "XXXX", samp_pts, in_dat_pth){
           geom_point()+
           facet_wrap(~metric, nrow = 2, scales = "free_y"))
 
-  return(mod_samps)
+  # calculating mean abundance at each site to compare to predictions
+  val_dat <- val_dat %>% select(location_id, sp4) %>% rename(observed = sp4)
+  val_dat2 <- val_dat %>% group_by(location_id) %>%
+    summarise(observed = mean(observed))
+
+  val_samps <- map(rasts, \(x) extract_transform(x, terra::vect(val_dat2))[,2]) %>% bind_cols() %>%
+    bind_cols(val_dat2 %>% st_drop_geometry())
+
+  val_samps_l <- val_samps %>%
+    # Bateman models were multiplied by 10000 to store as integer
+    mutate(bateman = bateman/10000) %>%
+    pivot_longer(-c(location_id, observed),
+                 names_to = "model", values_to = "prediction")
+
+  print(ggplot(val_samps_l, aes(observed, prediction))+
+          geom_point()+
+          geom_smooth(method = "lm", formula = y ~ x)+
+          facet_wrap(~model)+
+          coord_equal(xlim = c(0,1), ylim = c(0,1)))
+
+  perf_cont <- val_samps_l %>% nest_by(model) %>%
+    mutate(corr = cor(data$observed, data$prediction, use = "na.or.complete",
+                      method = "pearson"),
+           lm = list(lm(observed ~ prediction, data = data)),
+           coefs = broom::tidy(lm) %>% select(term, estimate) %>%
+                          pivot_wider(names_from = term, values_from = estimate) %>%
+             set_names(c("intercept", "slope")),
+           perf = broom::glance(lm)) %>%
+    select(-c(data, lm)) %>% unnest(cols = c(coefs, perf))
+
+  # connect binary obs with predictions
+  perf_bi <- val_samps %>% select(-observed) %>%
+    left_join(val_dat %>% st_drop_geometry(), by = "location_id") %>%
+    # Bateman models were multiplied by 10000 to store as integer
+    mutate(bateman = bateman/10000) %>%
+    pivot_longer(-c(location_id, observed),
+                 names_to = "model", values_to = "prediction") %>%
+    group_by(model) %>%
+    summarise(auc = Metrics::auc(observed, prediction),
+              rmse = Metrics::rmse(observed[which(!is.na(prediction))],
+                                   prediction[which(!is.na(prediction))]))
+
+  mod_perf <- left_join(perf_cont, perf_bi, by = "model") %>%
+    mutate(sp4 = sp4, sp6 = sp6)
+
+  return(lst(mod_samps, mod_perf))
 
 }
 

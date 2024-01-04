@@ -17,13 +17,26 @@
 #' time of day. The eBird models also don't make predictions in areas where
 #' there was < 0.05% spatial coverage in a 3km grid cell.
 #'
-#' Maps show the prediction rasters for each species. Graphs compare the values
-#' from each model at 1000 points using four different measures. Prediction is
-#' the raw value, scaled_pred is the prediction divided by the root-mean-square,
-#' rank_pred is the rank of each value relative to other sampled points after
-#' removing points that are NA for any model, and rank_sd gives the standard
-#' deviation of ranks across models for each point. Points were projected on the
-#' fly to avoid re-projecting the rasters
+#' Maps show the prediction rasters for each species. The first set of graphs
+#' compare the values from each model at 1000 points using four different
+#' measures. Prediction is the raw value, scaled_pred is the prediction divided
+#' by the root-mean-square, rank_pred is the rank of each value relative to
+#' other sampled points after removing points that are NA for any model, and
+#' rank_sd gives the standard deviation of ranks across models for each point.
+#' Points were projected on the fly to avoid re-projecting the rasters.
+#'
+#' The second set of graphs compare mean observed abundance across multiple
+#' recordings from the same location to the model predictions. I know that this
+#' doesn't fully make sense because the predictions are in different units and
+#' were trained on differently prepared data but I figured we would still expect
+#' them to be correlated or somewhat related as a starting point.
+#'
+#' The first table gives the mean of the rank_sds at each sample point for each
+#' species. The second table gives model performance measures for the validation
+#' data. corr, intercept, slope, r.squared, and nobs for a linear model of mean
+#' observed abundance ~ prediction. auc and rmse use the binary observation data
+#' and the model predictions. For the same reasons mentioned above this is just
+#' a starting point.
 #'
 #'
 
@@ -37,6 +50,8 @@ library(purrr)
 library(tidyr)
 library(ggplot2)
 library(stringr)
+
+terraOptions(progress=0)
 
 devtools::load_all(".")
 
@@ -96,9 +111,9 @@ sp_code_use <- all_sp_codes %>% filter(if_all(everything(), ~!is.na(.x)))
 samp_size <- 1000
 
 # For example use Missisa as study area
-study_area <- read_sf(file.path("analysis/data/derived_data/0_data/raw/shapefiles",
-                                "ecozones.shp")) %>%
-  filter(ZONE_NAME == "Hudson Plain")
+study_area <- read_sf("analysis/data/derived_data/0_data/processed/shapefiles/BCR7and8Ontario.shp")
+
+study_area <- summarise(study_area, name = "study_area")
 
 # sa_bbox <- st_bbox(study_area) %>% st_as_sfc()
 
@@ -107,25 +122,38 @@ study_area <- read_sf(file.path("analysis/data/derived_data/0_data/raw/shapefile
 samp_pts1 <- terra::spatSample(terra::vect(study_area), size = samp_size,
                               method = "regular")
 
+# validation data
+val_dat1 <- read.csv(file.path(in_dat_pth1, "cwsON_ARUs_validation.csv"))
+val_dat1 <- st_as_sf(val_dat1, coords = c("longitude", "latitude"), crs = 4326)
+
 # test one species in all models
-# do_sp_compare("aldfly", "ALFL", samp_pts = samp_pts1, in_dat_pth = in_dat_pth1)
+# do_sp_compare("aldfly", "ALFL", samp_pts = samp_pts1, val_dat = val_dat1,
+#               in_dat_pth = in_dat_pth1)
 
 #+ results='asis', fig.height=6, fig.width=7, warning=FALSE
 do_sp_compare_pos <- possibly(do_sp_compare, otherwise = data.frame(ID = NA), quiet = FALSE)
 
-out <- map2(sp_code_use$code6, sp_code_use$code4,
-            \(x, y) do_sp_compare_pos(x, y, samp_pts = samp_pts1, in_dat_pth = in_dat_pth1)) %>%
-  bind_rows()
+out <- map2(sp_code_use$code6[1:2], sp_code_use$code4[1:2],
+            \(x, y) do_sp_compare_pos(x, y, samp_pts = samp_pts1, val_dat = val_dat1,
+                                      in_dat_pth = in_dat_pth1))
 
-
-#' ## Table
-out %>% group_by(sp4, sp6) %>%
+#' ## Tables
+#+ tab.cap="Variability of ranks of sample points between models measured as the mean standard deviation of rank across the sampled cells."
+mod_samps <- out %>% map("mod_samps") %>% bind_rows() %>%  group_by(sp4, sp6)
+mod_samps %>%
   summarise(mean_rank_sd = mean(rank_sd, na.rm = TRUE) %>% round(2), .groups = "drop") %>%
   DT::datatable()
 
-write.csv(out, "analysis/data/derived_data/model_compare.csv", row.names = FALSE)
+#+ tab.cap="Comparison of model performance on validation data set. Note that the model predictions are not all in the same units but we might still expect them to be related. Not sure what the best way to address this is."
+mod_perf <- out %>% map("mod_perf") %>% bind_rows()
+mod_perf %>%
+  select(model, sp4, sp6, corr, intercept, slope, r.squared, nobs, auc, rmse) %>%
+  mutate(across(where(is.numeric), \(x)round(x, 3))) %>%
+  DT::datatable()
 
-rmarkdown::render("analysis/scripts/compare_model_predictions.R",
-                  knit_root_dir = here::here(), envir = new.env())
+write.csv(mod_samps, "analysis/data/derived_data/mod_samps.csv", row.names = FALSE)
+write.csv(mod_perf, "analysis/data/derived_data/mod_perf.csv", row.names = FALSE)
+# rmarkdown::render("analysis/scripts/compare_model_predictions.R",
+#                   knit_root_dir = here::here(), envir = new.env())
 
-
+# TODO figure out why third graph isn't printing except for last species. Doesn't matter which graph it is either.
