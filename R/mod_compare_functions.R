@@ -49,7 +49,6 @@ extract_transform <- function(ras, pts){
 #' @return Prints species code, maps and comparison graphs
 
 do_sp_compare <- function(sp6, sp4 = "XXXX", samp_pts, val_dat, in_dat_pth){
-
   cat(paste0("\n\n## ", sp6, "\n\n"))
 
   pats <- list(bateman = paste0(sp6, ".*_breeding.*suitability.tif$"),
