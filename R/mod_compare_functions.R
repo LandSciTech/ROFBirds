@@ -103,9 +103,10 @@ do_sp_compare <- function(sp6, sp4 = "XXXX", samp_pts, val_dat, in_dat_pth){
     mutate(metric = metric %>% factor(levels = c("prediction", "scaled_pred",
                                                  "rank_pred", "rank_sd")))
 
-  print(ggplot(mod_samps_l, aes(ID, value, col = model))+
-          geom_point()+
-          facet_wrap(~metric, nrow = 2, scales = "free_y"))
+  plt1 <- ggplot(mod_samps_l, aes(ID, value, col = model))+
+    geom_point()+
+    facet_wrap(~metric, nrow = 2, scales = "free_y")+
+    theme(legend.position = "bottom")
 
   # calculating mean abundance at each site to compare to predictions
   val_dat <- val_dat %>% select(location_id, sp4) %>% rename(observed = sp4)
@@ -121,11 +122,11 @@ do_sp_compare <- function(sp6, sp4 = "XXXX", samp_pts, val_dat, in_dat_pth){
     pivot_longer(-c(location_id, observed),
                  names_to = "model", values_to = "prediction")
 
-  print(ggplot(val_samps_l, aes(observed, prediction))+
-          geom_point()+
-          geom_smooth(method = "lm", formula = y ~ x)+
-          facet_wrap(~model)+
-          coord_equal(xlim = c(0,1), ylim = c(0,1)))
+  plt2 <- ggplot(val_samps_l, aes(observed, prediction))+
+    geom_point()+
+    geom_smooth(method = "lm", formula = y ~ x)+
+    facet_wrap(~model)+
+    coord_equal(xlim = c(0,1), ylim = c(0,1))
 
   perf_cont <- val_samps_l %>% nest_by(model) %>%
     mutate(corr = cor(data$observed, data$prediction, use = "na.or.complete",
@@ -151,6 +152,8 @@ do_sp_compare <- function(sp6, sp4 = "XXXX", samp_pts, val_dat, in_dat_pth){
 
   mod_perf <- left_join(perf_cont, perf_bi, by = "model") %>%
     mutate(sp4 = sp4, sp6 = sp6)
+
+  print(ggpubr::ggarrange(plt1, plt2, nrow = 1, align = "v"))
 
   return(lst(mod_samps, mod_perf))
 

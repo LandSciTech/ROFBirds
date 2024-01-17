@@ -6,6 +6,8 @@ output:
  html_document:
    toc: true
    toc_float: true
+editor_options: 
+  chunk_output_type: console
 ---
 
 #### Notes on differences between the models:
@@ -126,17 +128,20 @@ val_dat1 <- read.csv(file.path(in_dat_pth1, "cwsON_ARUs_validation.csv"))
 val_dat1 <- st_as_sf(val_dat1, coords = c("longitude", "latitude"), crs = 4326)
 
 # test one species in all models
-# do_sp_compare("aldfly", "ALFL", samp_pts = samp_pts1, val_dat = val_dat1,
-#               in_dat_pth = in_dat_pth1)
+do_sp_compare("aldfly", "ALFL", samp_pts = samp_pts1, val_dat = val_dat1,
+              in_dat_pth = in_dat_pth1)
 
 ```
-```{r results='asis', fig.height=6, fig.width=7, warning=FALSE}
+
+
+```{r results='asis', fig.height=6, fig.width=10, warning=FALSE}
 do_sp_compare_pos <- possibly(do_sp_compare, otherwise = data.frame(ID = NA), quiet = FALSE)
 
 out <- map2(sp_code_use$code6[1:2], sp_code_use$code4[1:2],
             \(x, y) do_sp_compare_pos(x, y, samp_pts = samp_pts1, val_dat = val_dat1,
                                       in_dat_pth = in_dat_pth1))
 ```
+
 
 ## Tables
 
@@ -159,6 +164,5 @@ write.csv(mod_perf, "analysis/data/derived_data/mod_perf.csv", row.names = FALSE
 # rmarkdown::render("analysis/scripts/compare_model_predictions.R",
 #                   knit_root_dir = here::here(), envir = new.env())
 
-# TODO figure out why third graph isn't printing except for last species. Doesn't matter which graph it is either.
 ```
 
