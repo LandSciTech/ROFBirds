@@ -277,7 +277,9 @@ obs_ON_1991_offsets <- obs_ON_1991_offsets_a %>% group_by(species) %>%
     # changing to 4 instead of actual distance of 400m makes offsets match QPAD better.
     area = pi*4^2,
     correction = area*avail_est*percept_est,
-    offset = log(correction)
+    offset = log(correction),
+    # following what David Isles did is not better
+    offset2 = log((pi*edr_est^2)/100 * avail_est)
   )
 
 # current version of avail and percept are very slow and throw errors if more
@@ -308,18 +310,21 @@ test <- obs_ON_1991_offsets_a %>% ungroup() %>% slice(1:10) %>% group_by(species
 # dashboard and the values for avail and percept seem similar.
 
 bamEnv <- new.env()
-load(file.path(in_dat_pth, "0_data/processed/BAMv6_RoFpackage_2022-01.RData"),
+load(file.path("analysis/data/derived_data", "0_data/processed/BAMv6_RoFpackage_2022-01.RData"),
      envir = bamEnv)
 
 sp_off <- get("off", envir = bamEnv)
 
 # Try comparing mean offset by species
 bam_off_plt <- colMeans(sp_off) %>% as_tibble(rownames = "species") %>%
+  filter(species %in% (obs_ON_1991_offsets %>% filter(!is.na(offset)) %>%
+                         pull(species))) %>%
   mutate(species = forcats::fct_reorder(species, value)) %>%
   ggplot(aes(species, value))+
   geom_col()+coord_flip()
 
 na_pop_off_plt <- obs_ON_1991_offsets %>% select(RTENO, Year, Stop, species, offset) %>%
+  filter(species %in% colnames(sp_off)) %>%
   tidyr::pivot_wider(names_from = species, values_from = offset) %>%
   select(-c(RTENO, Year, Stop)) %>%
   colMeans(na.rm = TRUE) %>% as_tibble(rownames = "species") %>%
@@ -335,5 +340,5 @@ na_pop_off_plt <- obs_ON_1991_offsets %>% select(RTENO, Year, Stop, species, off
 
 off_comp_plt <- ggpubr::ggarrange(bam_off_plt+ggtitle("BAM"),
                                   na_pop_off_plt+ggtitle("NA-POPS"))
-ggsave("analysis/figures/compare_offsets_BAM_NAPOP.pdf", height = 15, width = 7,
+ggsave("analysis/figures/compare_offsets_BAM_NAPOP.pdf", height = 12, width = 7,
        units = "in")
