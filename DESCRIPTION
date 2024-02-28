@@ -36,7 +36,6 @@ Imports:
     knitr,
     lubridate,
     lutz,
-    maptools,
     Matrix (>= 1.4-0),
     mefa4 (>= 0.3-8),
     Metrics,
