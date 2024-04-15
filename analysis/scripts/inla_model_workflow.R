@@ -1,11 +1,11 @@
-# ------------------------------------------------------------------------------
+# ******************************************************************************
 # ******************************************************************************
 # Implementation of David Isle's Landscape Distribution Modeling ECCC workflow
 # for Northern Ontario
 # ******************************************************************************
-# ------------------------------------------------------------------------------
+# ******************************************************************************
 
-#----------------------------------------------------------------------------
+# ******************************************************************************
 # Notable changes of method:
 # * Using the wildRtrax PC version of data collected by ARUs. This means that the
 # conversion from ARU format to PC format is done on wildRtrax whereas David did
@@ -13,11 +13,11 @@
 # * Only using the point count data from NatureCounts, not clear what David did
 # since non PC steps are commented out
 # * Using location to determine timezone since it does not seem to be recorded
-#----------------------------------------------------------------------------
+# ******************************************************************************
 
 
 # run settings #=============================
-test_mode <- TRUE
+test_mode <- FALSE
 if(test_mode){
   warning("Running in test mode with small data set.")
 }
@@ -100,7 +100,10 @@ all_species <- subset(all_species, species_scientific_name %!in% c("NULL NULL","
 
 rm(WT_species)
 
-# wildTrax Download and Cleaning #==============================================
+
+# Data Prep #===================================================================
+{
+## WildTrax Download and Cleaning #==============================================
 # Download WildTrax datasets within a study area boundary
 
 # Polygon delineating study area boundary
@@ -137,10 +140,12 @@ if(test_mode){
 
 
 # Download projects with 'PC' data (includes projects converted from ARU)
+wt_dl_loc_year <- safely(wt_dl_loc_year, quiet = FALSE)
+# Cache not really working as I would hope. Still does the download again...
+PC_fulldat <- map(PC_projects$project_id, ~wt_dl_loc_year(.x, sens_id = "PC"))
 
-
-PC_fulldat <- reproducible::Cache(map(PC_projects$project_id, ~wt_dl_loc_year(.x, sens_id = "PC")) %>%
-  bind_rows())
+# There was one error for a bats data set
+PC_fulldat <- PC_fulldat %>% map("result") %>% bind_rows()
 
 write.csv(PC_fulldat, file = "analysis/data/interim_data/WildTrax_PC_locations.csv", row.names = FALSE)
 
@@ -240,7 +245,11 @@ method_definitions <- rbind(c(survey_duration_method = "0-1-2-3-4-5-6-7-8-9-10mi
                             c(survey_duration_method = "0-5-10min", Survey_Duration_Minutes = 5),
                             c(survey_duration_method = "0-9min", Survey_Duration_Minutes = 9),
                             c(survey_duration_method = "0-5min", Survey_Duration_Minutes = 5),
-                            c(survey_duration_method = "0-1min", Survey_Duration_Minutes = 1)) %>%
+                            c(survey_duration_method = "0-1min", Survey_Duration_Minutes = 1),
+                            c(survey_duration_method = "0-4.5min", Survey_Duration_Minutes = 5),
+                            c(survey_duration_method = "0-4.97min", Survey_Duration_Minutes = 5),
+                            c(survey_duration_method = "0-2.38min", Survey_Duration_Minutes = 2),
+                            c(survey_duration_method = "0-0.69min", Survey_Duration_Minutes = 0.5)) %>%
   as.data.frame()
 
 if(any(PC_surveys$survey_duration_method %!in% method_definitions$survey_duration_method)){
@@ -278,7 +287,6 @@ PC_surveys <- left_join(PC_surveys, method_definitions,
                         join_by(survey_distance_method))
 
 # Remove records outside the study area boundary
-
 PC_surveys <- PC_surveys %>%
   subset(!is.na(latitude) & !is.na(longitude)) %>%
   st_as_sf(coords=c("longitude","latitude"),crs=4326, remove = FALSE) %>%
@@ -286,8 +294,11 @@ PC_surveys <- PC_surveys %>%
   st_set_agr("constant") %>%
   st_intersection(st_set_agr(Study_Area, "constant"))
 
-# Create a matrix of counts for each species
+# Remove resampled surveys
+PC_surveys <- PC_surveys %>%
+  filter(str_detect(project, "Resample", negate = TRUE))
 
+# Create a matrix of counts for each species
 PC_counts <- subset(PC_counts, survey_id %in% PC_surveys$survey_id)
 PC_counts$survey_id <- factor(PC_counts$survey_id, levels = PC_surveys$survey_id)
 
@@ -307,7 +318,7 @@ PC_counts <- PC_counts %>%
 stopifnot(mean(PC_counts$survey_id == PC_surveys$survey_id) == 1)
 
 
-# Point Counts
+# Format names
 PC_surveys <- PC_surveys %>%
 
   rename(Project_Name = project,
@@ -468,7 +479,7 @@ nc_pc_surveyinfo <- nc_pc_surveyinfo %>%
                 Survey_Duration_Minutes,
                 Max_Distance_Metres)
 
-# combine NC and WT data #======================================================
+# Combine NC and WT Data #======================================================
 
 # ************************************************************
 # ************************************************************
@@ -547,13 +558,16 @@ all_surveys <- bind_rows(WT_surveyinfo %>% st_transform(crs = AEA_proj) %>%
 
 # Set time zone
 # this forces this timezone which is not local for all of Ontario. Need to check
-tz(all_surveys$Date_Time) <- "Canada/Eastern"
+# tz(all_surveys$Date_Time) <- "Canada/Eastern"
 
 # lubridate forces the same timezone for all the rows in the column so not sure this is helpful
 all_surveys <- all_surveys %>%
   mutate(timez = lutz::tz_lookup_coords(Latitude, Longitude, method = "accurate")) %>%
   group_by(timez) %>%
-  mutate(Date_Time = force_tz(Date_Time, unique(timez)))
+  mutate(Date_Time = force_tz(Date_Time, unique(timez))) %>%
+  ungroup()
+
+# TODO double check time zones and sunrise to ensure they are correct
 
 # Hours since sunrise
 all_surveys$Sunrise <- suntools::sunriset(crds = st_transform(all_surveys,crs = 4326),
@@ -606,3 +620,140 @@ ggplot()+
   scale_color_manual(values=c("orangered","black","dodgerblue"),name = "Data Source")+
   facet_grid(.~Survey_Class)+
   ggtitle("Data availability")
+
+# Tidy up data prep objects
+rm('counts', 'distance_matrix', 'dists', 'i', 'method_definitions',
+   'missing_spcd', 'nc_data', 'nc_data_cleaned', 'nc_data_pc', 'NC_only',
+   'nc_pc_matrix', 'nc_pc_surveyinfo', 'nc_species', 'NC_species', 'nc_tax',
+   'obs_to_evaluate', 'PC_counts', 'PC_fulldat', 'PC_projects', 'PC_removed',
+   'PC_sf', 'PC_summary', 'PC_surveys', 'PID', 'project_name', 'species',
+   'species_to_fix', 'time_diff', 'WT_buff', 'WT_dat', 'WT_matrix', 'WT_only',
+   'WT_removed', 'WT_species', 'WT_surveyinfo', 'WT_within_5m')
+}
+# Select Analysis Data #========================================================
+
+# Select data meeting criteria for inclusion (dates, time since sunrise, etc)
+yr_day_start <- yday(ymd("2022-05-15"))
+yr_day_end <- yday(ymd("2022-07-15"))
+yr_start <- 2021
+yr_end <- 2025
+hr_ssr_start <- -2
+hr_ssr_end <- 4
+# survey duration min and max are different for point and stationary counts
+
+analysis_data <- readRDS(file = "analysis/data/interim_data/analysis_data.rds")
+
+all_surveys <- analysis_data$all_surveys %>% ungroup() %>%
+  mutate(Obs_Index = 1:n())
+full_count_matrix <- analysis_data$full_count_matrix
+all_surveys$Survey_Type[all_surveys$Survey_Type == "Point Count"] <- "Point_Count"
+
+# Select Point Counts / ARUs to use
+PC_to_use <- subset(all_surveys,
+                    Survey_Type %in% c("Point_Count","ARU_SPT","ARU_SPM") &
+
+                      Survey_Duration_Minutes > 1 &
+                      Survey_Duration_Minutes <= 10 &
+
+                      Hours_Since_Sunrise >= hr_ssr_start &
+                      Hours_Since_Sunrise <= hr_ssr_end &
+
+                      yday(Date_Time) >= yr_day_start &
+                      yday(Date_Time) <= yr_day_end &
+
+                      year(Date_Time) >= yr_start &
+                      year(Date_Time) <= yr_end
+)
+
+
+# Select STATIONARY COUNT data to use
+SC_to_use <- subset(all_surveys,
+
+                    Survey_Type %in% c("Stationary Count") &
+
+                      Hours_Since_Sunrise >= -2 &
+                      Hours_Since_Sunrise <= 4 &
+
+                      Survey_Duration_Minutes >= 1 &
+                      Survey_Duration_Minutes <= 120 &
+
+                      yday(Date_Time) >= yr_day_start &
+                      yday(Date_Time) <= yr_day_end &
+
+                      year(Date_Time) >= yr_start &
+                      year(Date_Time) <= yr_end)
+
+# Subset matrices
+surveys_to_use <- c(PC_to_use$Obs_Index) # , SC_to_use$Obs_Index , LT_to_use$Obs_Index
+all_surveys <- subset(all_surveys, Obs_Index %in% surveys_to_use)
+full_count_matrix <- full_count_matrix[surveys_to_use,]
+all_surveys$Obs_Index <- 1:nrow(all_surveys)
+
+rm(PC_to_use, SC_to_use, hr_ssr_end, hr_ssr_start, yr_day_end, yr_day_start,
+   yr_end, yr_start, surveys_to_use)
+
+# Select Covariates #===========================================================
+
+# Dataframe to store covariates
+all_surveys_covariates <- all_surveys %>% dplyr::select(Obs_Index)
+
+Study_Area_bound <- Study_Area %>% st_union()
+
+# 1 km x 1 km grid
+ONGrid <- reproducible::Cache(st_make_grid(
+  Study_Area_bound,
+  cellsize = units::set_units(1*1,km^2),
+  what = "polygons",
+  square = TRUE,
+  flat_topped = FALSE)%>%
+  st_as_sf() %>%
+  st_intersection(Study_Area_bound) %>%
+  na.omit())
+
+ONGrid$point_id <- 1:nrow(ONGrid)
+ONGrid_centroid <- st_centroid(ONGrid)
+
+# Add 20 km buffer so that covariates can extend slightly outside province if possible
+SABoundary_buffer <- Study_Area_bound %>% st_buffer(20000)
+
+# Download covariate layers
+url_nalcms_2020_Can <- "http://www.cec.org/files/atlas_layers/1_terrestrial_ecosystems/1_01_0_land_cover_2020_30m/can_land_cover_2020_30m_tif.zip"
+nalcms_2020_Can <- reproducible::prepInputs(
+  url = url_nalcms_2020_Can,
+  destinationPath = "analysis/data/raw_data/",
+  targetFile = "analysis/data/raw_data/CAN_NALCMS_landcover_2020_30m.tif",
+  alsoExtract = NA,
+  fun = terra::rast,
+  studyArea = SABoundary_buffer,
+  writeTo = "analysis/data/derived_data/covariates/NALCMS_NorthON.tif",
+  useCache = TRUE
+  )
+
+
+url_adaptwest_norm <- "https://s3-us-west-2.amazonaws.com/www.cacpd.org/CMIP6v73/normals/Normal_1961_1990_bioclim.zip"
+
+clim_norm <- reproducible::prepInputs(
+  url = url_adaptwest_norm,
+  destinationPath = "analysis/data/raw_data/",
+  targetFile = "Normal_1961_1990/Normal_1961_1990_bioclim/Normal_1961_1990_MAT.tif"
+)
+
+# Path to spatial covariates
+covar_folder <- "analysis/data/raw_data"
+
+
+# Annual mean temperature
+AMT <- rast(paste0(covar_folder,"National/AnnualMeanTemperature/wc2.1_30s_bio_1.tif")) %>%
+  crop(st_transform(ONBoundary_buffer,crs(.))) %>%
+  project(st_as_sf(ONBoundary_buffer), res = 250)
+
+# Land cover of Canada 2020 (not reprojected... faster to reproject grid)
+lcc2020 <- rast(paste0(covar_folder,"National/LandCoverCanada2020/landcover-2020-classification.tif")) %>%
+  crop(st_transform(ONBoundary_buffer,crs(.)))
+
+# Stand canopy closure
+SCC <- rast(paste0(covar_folder,"National/NationalForestInventory/NFI_MODIS250m_2011_kNN_Structure_Stand_CrownClosure_v1.tif")) %>%
+  crop(st_transform(ONBoundary_buffer,crs(.))) %>%
+  project(st_as_sf(ONBoundary_buffer), res = 250)
+
+
