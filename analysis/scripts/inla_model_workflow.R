@@ -30,7 +30,7 @@ my_packs = c('tidyverse',
              'viridis',
              'ggrepel',
              'scales',
-             'wildRtrax',
+             'wildrtrax',
              'lubridate',
              'sf',
              'naturecounts',
@@ -1186,14 +1186,19 @@ ONGrid <- ONGrid %>%
 species_to_model <- species_to_model %>%
   arrange(desc(n_squares),desc(n_detections))
 
+# adding a more southern dispersed species to compare
 species_to_fit <- species_to_model %>%
-  subset(Species_Code_BSC %in% c("SOSA","LEYE","GRYE"))
+  subset(Species_Code_BSC %in% c("SOSA","LEYE","GRYE", "DEJU"))
 
 for (sp_code in species_to_fit$Species_Code_BSC){
 
   print(sp_code)
 
   map_file <- paste0("analysis/data/derived_data/INLA_results/", sp_code, "_q50.png")
+
+  if(!dir.exists("analysis/data/derived_data/INLA_results")){
+    dir.create("analysis/data/derived_data/INLA_results")
+  }
 
   # Skip this species if already run
   #if (file.exists(map_file)) next
@@ -1237,7 +1242,8 @@ for (sp_code in species_to_fit$Species_Code_BSC){
   if (species_offsets$offset_exists == FALSE) sp_dat$log_QPAD_offset <- 0
 
   if (species_offsets$offset_exists == TRUE){
-    # TODO: didn't we already do this?
+    # Calculate offset for duration of survey from species overall offset value
+    # how come this doesn't include time since sunrise? Maybe because it is in the model directly?
     A_metres <- pi*species_offsets$EDR^2
     p <- 1-exp(-sp_dat$Survey_Duration_Minutes*species_offsets$cue_rate)
     sp_dat$log_QPAD_offset <- log(A_metres * p)
@@ -1486,7 +1492,7 @@ for (sp_code in species_to_fit$Species_Code_BSC){
   # Median of posterior
   plot_q50 <- ggplot() +
 
-    geom_stars(data = raster_q50) +
+    stars::geom_stars(data = raster_q50) +
     scale_fill_manual(name = "<span style='font-size:13pt'>Relative Abundance</span><br><span style='font-size:7pt'>Per 5-minute point count</span><br><span style='font-size:7pt'>(Posterior Median)</span>",
                       values = colpal_relabund(length(levels(raster_q50$levs))), drop=FALSE,na.translate=FALSE)+
 
@@ -1499,8 +1505,8 @@ for (sp_code in species_to_fit$Species_Code_BSC){
     # Point count detections
     geom_sf(data = subset(ONSquares_centroids, !is.na(PC_detected) & PC_detected > 0), col = "black",size=0.5,stroke = 0, shape = 16)+
 
-    geom_sf(data = ONBoundary,colour="black",fill=NA,lwd=0.3,show.legend = F) +
-    coord_sf(clip = "off",xlim = range(as.data.frame(st_coordinates(ONBoundary))$X))+
+    # geom_sf(data = ONBoundary,colour="black",fill=NA,lwd=0.3,show.legend = F) +
+    # coord_sf(clip = "off",xlim = range(as.data.frame(st_coordinates(ONBoundary))$X))+
     theme(panel.background = element_blank(),
           panel.grid.major = element_blank(),
           panel.grid.minor = element_blank())+
@@ -1509,8 +1515,8 @@ for (sp_code in species_to_fit$Species_Code_BSC){
     theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))+
     theme(legend.margin=margin(0,0,0,0),
           legend.box.margin=margin(5,10,5,-20),
-          legend.title.align=0.5,
-          legend.title = element_markdown(lineheight=.9,hjust = "left"))+
+          # legend.title.align=0.5,
+          legend.title = element_markdown(lineheight=.9,hjust = 1))+
     theme(legend.key = element_rect(fill = "transparent", colour = "transparent"))+
 
     annotate(geom="text",x=1050000,y=1500000, label= paste0(species_label),lineheight = .85,hjust = 0,size=6,fontface =2) +
@@ -1542,7 +1548,7 @@ for (sp_code in species_to_fit$Species_Code_BSC){
 
   plot_CI_width_90 <- ggplot() +
 
-    geom_stars(data = raster_CI_width_90) +
+    stars::geom_stars(data = raster_CI_width_90) +
     scale_fill_manual(name = "<span style='font-size:13pt'>Relative Uncertainty</span><br><span style='font-size:7pt'>Per 5-minute point count</span><br><span style='font-size:7pt'>Width of 90% CI</span>",
                       values = colpal_uncertainty(length(levels(raster_CI_width_90$levs))), drop=FALSE,na.translate=FALSE)+
 
@@ -1554,8 +1560,8 @@ for (sp_code in species_to_fit$Species_Code_BSC){
     # Point count detections
     geom_sf(data = subset(ONSquares_centroids, !is.na(PC_detected) & PC_detected > 0), col = "black",size=0.5,stroke = 0, shape = 16)+
 
-    geom_sf(data = ONBoundary,colour="black",fill=NA,lwd=0.3,show.legend = F) +
-    coord_sf(clip = "off",xlim = range(as.data.frame(st_coordinates(ONBoundary))$X))+
+    # geom_sf(data = ONBoundary,colour="black",fill=NA,lwd=0.3,show.legend = F) +
+    # coord_sf(clip = "off",xlim = range(as.data.frame(st_coordinates(ONBoundary))$X))+
     theme(panel.background = element_blank(),
           panel.grid.major = element_blank(),
           panel.grid.minor = element_blank())+
@@ -1565,7 +1571,7 @@ for (sp_code in species_to_fit$Species_Code_BSC){
     theme(legend.margin=margin(0,0,0,0),
           legend.box.margin=margin(5,10,5,-20),
           legend.title.align=0.5,
-          legend.title = element_markdown(lineheight=.9,hjust = "left"))+
+          legend.title = element_markdown(lineheight=.9,hjust = 1))+
     theme(legend.key = element_rect(fill = "transparent", colour = "transparent"))+
 
     annotate(geom="text",x=1040000,y=1500000, label= paste0(species_label),lineheight = .85,hjust = 0,size=6,fontface =2) +
@@ -1574,7 +1580,7 @@ for (sp_code in species_to_fit$Species_Code_BSC){
     guides(fill = guide_legend(order = 1),
            size = guide_legend(order = 2))
 
-  png(paste0("../Output/Prediction_Maps/Uncertainty/",sp_code,"_CI_width_90.png"), width=10, height=6.5, units="in", res=1000, type="cairo")
+  png(map_file %>% str_replace("_q50", "_CI_width_90"), width=10, height=6.5, units="in", res=1000, type="cairo")
   print(plot_CI_width_90)
   dev.off()
 
@@ -1601,7 +1607,7 @@ for (sp_code in species_to_fit$Species_Code_BSC){
 
   plot_CV <- ggplot() +
 
-    geom_stars(data = raster_CV) +
+    stars::geom_stars(data = raster_CV) +
     scale_fill_manual(name = "<span style='font-size:13pt'>Coef. of Variation</span><br><span style='font-size:7pt'>Per 5-minute point count</span><br><span style='font-size:7pt'></span>",
                       values = colpal_uncertainty(length(levels(raster_CV$CV_levs))), drop=FALSE,na.translate=FALSE)+
 
@@ -1613,8 +1619,8 @@ for (sp_code in species_to_fit$Species_Code_BSC){
     # Point count detections
     geom_sf(data = subset(ONSquares_centroids, !is.na(PC_detected) & PC_detected > 0), col = "black",size=0.5,stroke = 0, shape = 16)+
 
-    geom_sf(data = ONBoundary,colour="black",fill=NA,lwd=0.3,show.legend = F) +
-    coord_sf(clip = "off",xlim = range(as.data.frame(st_coordinates(ONBoundary))$X))+
+    # geom_sf(data = ONBoundary,colour="black",fill=NA,lwd=0.3,show.legend = F) +
+    # coord_sf(clip = "off",xlim = range(as.data.frame(st_coordinates(ONBoundary))$X))+
     theme(panel.background = element_blank(),
           panel.grid.major = element_blank(),
           panel.grid.minor = element_blank())+
@@ -1624,7 +1630,7 @@ for (sp_code in species_to_fit$Species_Code_BSC){
     theme(legend.margin=margin(0,0,0,0),
           legend.box.margin=margin(5,10,5,-20),
           legend.title.align=0.5,
-          legend.title = element_markdown(lineheight=.9,hjust = "left"))+
+          legend.title = element_markdown(lineheight=.9,hjust = 1))+
     theme(legend.key = element_rect(fill = "transparent", colour = "transparent"))+
 
     annotate(geom="text",x=1040000,y=1500000, label= paste0(species_label),lineheight = .85,hjust = 0,size=6,fontface =2) +
@@ -1633,7 +1639,7 @@ for (sp_code in species_to_fit$Species_Code_BSC){
     guides(fill = guide_legend(order = 1),
            size = guide_legend(order = 2))
 
-  png(paste0("../Output/Prediction_Maps/Uncertainty/",sp_code,"_CV.png"), width=10, height=6.5, units="in", res=1000, type="cairo")
+  png(map_file %>% str_replace("_q50", "_CV"), width=10, height=6.5, units="in", res=1000, type="cairo")
   print(plot_CV)
   dev.off()
 
@@ -1660,7 +1666,7 @@ for (sp_code in species_to_fit$Species_Code_BSC){
   # Median of posterior
   plot_pObs <- ggplot() +
 
-    geom_stars(data = raster_pObs) +
+    stars::geom_stars(data = raster_pObs) +
     scale_fill_manual(name = "<span style='font-size:13pt'>Prob. of Observation</span><br><span style='font-size:7pt'>Per 5-minute point count</span><br><span style='font-size:7pt'>(Posterior Median)</span>",
                       values = colpal_pObs(length(levels(raster_pObs$pObs_levs))),
                       drop=FALSE,na.translate=FALSE)+
@@ -1673,8 +1679,8 @@ for (sp_code in species_to_fit$Species_Code_BSC){
     # Point count detections
     geom_sf(data = subset(ONSquares_centroids, !is.na(PC_detected) & PC_detected > 0), col = "black",size=0.5,stroke = 0, shape = 16)+
 
-    geom_sf(data = ONBoundary,colour="black",fill=NA,lwd=0.3,show.legend = F) +
-    coord_sf(clip = "off",xlim = range(as.data.frame(st_coordinates(ONBoundary))$X))+
+    # geom_sf(data = ONBoundary,colour="black",fill=NA,lwd=0.3,show.legend = F) +
+    # coord_sf(clip = "off",xlim = range(as.data.frame(st_coordinates(ONBoundary))$X))+
     theme(panel.background = element_blank(),
           panel.grid.major = element_blank(),
           panel.grid.minor = element_blank())+
@@ -1684,7 +1690,7 @@ for (sp_code in species_to_fit$Species_Code_BSC){
     theme(legend.margin=margin(0,0,0,0),
           legend.box.margin=margin(5,10,5,-20),
           legend.title.align=0.5,
-          legend.title = element_markdown(lineheight=.9,hjust = "left"))+
+          legend.title = element_markdown(lineheight=.9,hjust = 1))+
     theme(legend.key = element_rect(fill = "transparent", colour = "transparent"))+
 
     annotate(geom="text",x=1040000,y=1500000, label= paste0(species_label),lineheight = .85,hjust = 0,size=6,fontface =2) +
@@ -1695,7 +1701,7 @@ for (sp_code in species_to_fit$Species_Code_BSC){
 
   #print(plot_pObs)
 
-  png(paste0("../Output/Prediction_Maps/PObs/",sp_code,"_PObs.png"), width=10, height=6.5, units="in", res=1000, type="cairo")
+  png(map_file %>% str_replace("_q50", "_PObs"), width=10, height=6.5, units="in", res=1000, type="cairo")
   print(plot_pObs)
   dev.off()
 
@@ -1705,7 +1711,7 @@ for (sp_code in species_to_fit$Species_Code_BSC){
   # ------------------------------------------------
   # ------------------------------------------------
 
-  if (species_offsets$offset_exists == TRUE){
+  if (species_offsets$offset_exists){
 
     ONGrid_species$density_per_ha_q50 <- ONGrid_species$pred_q50 / exp(log_offset_5min) * 10000
 
@@ -1740,8 +1746,8 @@ for (sp_code in species_to_fit$Species_Code_BSC){
       # Point count detections
       geom_sf(data = subset(ONSquares_centroids, !is.na(PC_detected) & PC_detected > 0), col = "black",size=0.5,stroke = 0, shape = 16)+
 
-      geom_sf(data = ONBoundary,colour="black",fill=NA,lwd=0.3,show.legend = F) +
-      coord_sf(clip = "off",xlim = range(as.data.frame(st_coordinates(ONBoundary))$X))+
+      # geom_sf(data = ONBoundary,colour="black",fill=NA,lwd=0.3,show.legend = F) +
+      # coord_sf(clip = "off",xlim = range(as.data.frame(st_coordinates(ONBoundary))$X))+
       theme(panel.background = element_blank(),
             panel.grid.major = element_blank(),
             panel.grid.minor = element_blank())+
@@ -1751,7 +1757,7 @@ for (sp_code in species_to_fit$Species_Code_BSC){
       theme(legend.margin=margin(0,0,0,0),
             legend.box.margin=margin(5,10,5,-20),
             legend.title.align=0.5,
-            legend.title = element_markdown(lineheight=.9,hjust = "left"))+
+            legend.title = element_markdown(lineheight=.9,hjust = 1))+
       theme(legend.key = element_rect(fill = "transparent", colour = "transparent"))+
 
       annotate(geom="text",x=1050000,y=1500000, label= paste0(species_label),lineheight = .85,hjust = 0,size=6,fontface =2) +
@@ -1760,7 +1766,7 @@ for (sp_code in species_to_fit$Species_Code_BSC){
       guides(fill = guide_legend(order = 1),
              size = guide_legend(order = 2))
 
-    png(paste0("../Output/Prediction_Maps/Density/",sp_code,"_density.png"), width=10, height=6.5, units="in", res=1000, type="cairo")
+    png(map_file %>% str_replace("_q50", "_density"), width=10, height=6.5, units="in", res=1000, type="cairo")
     print(plot_dens)
     dev.off()
 
