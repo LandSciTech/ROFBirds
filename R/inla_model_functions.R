@@ -177,36 +177,12 @@ do_res_plot <- function(pred_rast, title, subtitle, subsubtitle = "", samp_grid,
 }
 
 prep_sp_dat <- function(analysis_data, proj_use){
-  analysis_data$all_surveys %>%
+  sp_dat <- analysis_data$all_surveys %>%
     mutate(count = analysis_data$full_count_matrix[,sp_code]) %>%
 
     # Only select point counts
     subset(Survey_Type %in% c("Point_Count","ARU_SPT","ARU_SPM")) %>%
     st_transform(proj_use)
-}
-
-fit_inla <- function(sp_code, analysis_data, proj_use, study_poly){
-  message("starting model for: ", sp_code)
-
-  model_file <- paste0("analysis/data/derived_data/INLA_results/models/", sp_code, "_mod.rds")
-
-  if(!dir.exists("analysis/data/derived_data/INLA_results/models")){
-    dir.create("analysis/data/derived_data/INLA_results/models")
-  }
-
-  # Skip this species if already run
-  #if (file.exists(map_file)) next
-
-  # Prepare data for this species
-  sp_dat <- prep_sp_dat(analysis_data, proj_use)
-
-  # n_det_sq <- subset(sp_dat,count>0) %>%
-  #   as.data.frame() %>%
-  #
-  #   summarize(n_sq = length(unique(sq_id)),
-  #             n_det = sum(count>0))
-  #
-  # if (n_det_sq$n_sq < 30 | n_det_sq$n_det < 60) next
 
 
   # Extract ebird range for this species (if it exists)
@@ -237,6 +213,31 @@ fit_inla <- function(sp_code, analysis_data, proj_use, study_poly){
     sp_dat$log_QPAD_offset <- log(A_metres * p)
   }
 
+  sp_dat
+}
+
+fit_inla <- function(sp_code, analysis_data, proj_use, study_poly){
+  message("starting model for: ", sp_code)
+
+  model_file <- paste0("analysis/data/derived_data/INLA_results/models/", sp_code, "_mod.rds")
+
+  if(!dir.exists("analysis/data/derived_data/INLA_results/models")){
+    dir.create("analysis/data/derived_data/INLA_results/models")
+  }
+
+  # Skip this species if already run
+  #if (file.exists(map_file)) next
+
+  # Prepare data for this species
+  sp_dat <- prep_sp_dat(analysis_data, proj_use)
+
+  # n_det_sq <- subset(sp_dat,count>0) %>%
+  #   as.data.frame() %>%
+  #
+  #   summarize(n_sq = length(unique(sq_id)),
+  #             n_det = sum(count>0))
+  #
+  # if (n_det_sq$n_sq < 30 | n_det_sq$n_det < 60) next
 
   # FIT MODEL WITH INLA
 
@@ -356,7 +357,7 @@ predict_inla <- function(analysis_data, mod){
 
   if (sp_code %in% names(analysis_data$species_ranges)){
 
-    range <- analysis_data$species_ranges[[sp_code]] %>% st_transform(st_crs(sp_dat))
+    range <- analysis_data$species_ranges[[sp_code]] %>% st_transform(st_crs(ONGrid))
   }
 
   # For every pixel on landscape, extract distance from eBird range limit
@@ -571,8 +572,12 @@ map_inla_preds <- function(sp_code, analysis_data, preds, proj_use, atlas_square
                            map_file %>% str_replace("_q50", "_PObs"))
 
   # Density estimate (per m2) - subtract detectability offset
+  species_offsets <- subset(analysis_data$species_to_model, Species_Code_BSC == sp_code)
 
-  if (species_offsets$offset_exists){
+  log_offset_5min <- 0
+  if (species_offsets$offset_exists == TRUE) log_offset_5min <- species_offsets$log_offset_5min
+
+  if (log_offset_5min != 0){
 
     preds$density_per_ha_q50 <- preds$pred_q50 / exp(log_offset_5min) * 10000
 
