@@ -93,7 +93,7 @@ BSC_species <- naturecounts::search_species_code() %>%
   unique()
   # mutate(index = 1:nrow(.))
 
-WT_species <- wildRtrax::wt_get_species() %>%
+WT_species <- wildrtrax::wt_get_species() %>%
   # assuming we only want birds
   filter(species_class == "AVES") %>%
   rename(WT_spcd = species_code) %>%
@@ -214,9 +214,9 @@ for (i in 1:nrow(PC_summary)){
 # preserve time format when writing to csv
 write.csv(mutate(PC_counts, survey_date=format(survey_date, "%FT%H:%M:%S%z")),
                  file = "analysis/data/interim_data/WildTrax_PC_counts.csv",row.names = FALSE)
+
 PC_counts  <- read.csv(file = "analysis/data/interim_data/keep/WildTrax_PC_counts.csv") %>%
   mutate(survey_date = lubridate::ymd_hms(survey_date))
-
 
 # Convert WildTrax species codes to Birds Canada species codes when they disagree
 species <- subset(all_species,WT_spcd %in% unique(PC_counts$species_code))
@@ -324,7 +324,7 @@ PC_counts$survey_id <- factor(PC_counts$survey_id, levels = PC_surveys$survey_id
 # Total number of individuals detected per survey (sum of individual counts)
 PC_counts <- PC_counts %>%
   group_by(species_code,survey_id) %>%
-  summarize(total_count = sum(as.numeric(individual_count))) %>%
+  summarize(total_count = sum(as.numeric(individual_count)), .groups = "drop") %>%
   as.data.frame() %>%
   pivot_wider(names_from = species_code,
               values_from = total_count,
@@ -390,6 +390,10 @@ if(!file.exists("analysis/data/interim_data/NatureCounts_data_download.csv")){
 }
 nc_data <- read.csv("analysis/data/interim_data/NatureCounts_data_download.csv")
 
+nc_data2 <- read.csv("analysis/data/raw_data/OBBA2_naturecounts_download.csv")
+
+nc_data <- bind_rows(nc_data, nc_data2)
+
 nc_data_cleaned <- nc_data %>%
   # Remove empty columns
   select(where(~sum(!is.na(.x)) > 0)) %>%
@@ -432,11 +436,12 @@ nc_data_cleaned %<>% mutate(spcd=case_when(species_id==32671 ~ "GHOW",
                                   species_id==41568 ~ "NOGO",
                                   species_id==0 ~ "NONE",
                                   .default = spcd)) %>%
-  filter(!is.na(species_id)) %>% filter(species_id!=12285)
+  filter(!is.na(species_id)) %>% filter(species_id!=12285) %>%
+  filter(!is.na(spcd))
 
 # only using point count for now because I don't know how/if the others should
 # be used
-nc_data_pc <- nc_data_cleaned %>% filter(collection == "ONATLAS3PC") %>%
+nc_data_pc <- nc_data_cleaned %>% filter(collection %>% str_detect("PC$")) %>%
   filter(AllSpeciesReported == "Yes") %>%
   # Remove empty columns or all the same
   select(where(~sum(!is.na(.x)) > 0 & n_distinct(.x) != 1)) %>%
@@ -448,13 +453,18 @@ nc_data_pc <- nc_data_cleaned %>% filter(collection == "ONATLAS3PC") %>%
   # remove if date and time is not present. Note this removes 13967 rows, all
   # from the Point Count 6 Interval protocol because they have no time data
   filter(!is.na(TimeCollected), !is.na(ObservationDate)) %>%
+  # remove if long/lat are NA, removes 3631
+  filter(!is.na(longitude)) %>%
   # remove rows where only catalog num is different
   select(-GlobalUniqueIdentifier, -CatalogNumber, -record_id, -any_of("X")) %>%
   distinct() %>%
-  arrange(surveyID)
+  arrange(surveyID) %>%
+  st_as_sf(.,coords = c("longitude","latitude"), crs = st_crs(4326), remove = FALSE) %>%
+  st_transform(st_crs(Study_Area_bound)) %>%
+  st_filter(Study_Area_bound)
 
 # Construct a dataset that contains JUST survey information (not counts)
-nc_pc_surveyinfo <- nc_data_pc %>%
+nc_pc_surveyinfo <- nc_data_pc %>% st_drop_geometry() %>%
   dplyr::select(surveyID, Locality, latitude, longitude, ObservationDate,
                 TimeCollected, DurationInMinutes, ProtocolType) %>%
   distinct() %>%
@@ -463,7 +473,8 @@ nc_pc_surveyinfo <- nc_data_pc %>%
 
 # Counts for each species on each survey are stored in a matrix
 # Note: I checked and the result is the same as the for loop
-nc_pc_matrix <- nc_data_pc %>% select(surveyID, spcd, ObservationCount) %>%
+nc_pc_matrix <- nc_data_pc %>% st_drop_geometry() %>%
+  select(surveyID, spcd, ObservationCount) %>%
   pivot_wider(names_from = spcd, values_from = ObservationCount, values_fill = 0) %>%
   column_to_rownames("surveyID") %>%
   as.matrix()
@@ -512,7 +523,7 @@ nc_pc_surveyinfo <- nc_pc_surveyinfo %>%
 
 # load WT data
 
-WT_dat <- readRDS(file = "analysis/data/interim_data/WT_dat.rds")
+WT_dat <- readRDS(file = "analysis/data/interim_data/keep/WT_dat.rds")
 WT_surveyinfo <- WT_dat$WT_surveyinfo %>% st_transform(crs = AEA_proj)
 WT_matrix <- WT_dat$WT_matrix
 
@@ -630,15 +641,15 @@ saveRDS(analysis_data, file = "analysis/data/interim_data/analysis_data.rds")
 all_surveys$Survey_Class <- factor(all_surveys$Survey_Class, levels = c("WT","NC_PC")) # "DO"
 ggplot()+
   geom_sf(data = Study_Area, fill = "gray95", col = "transparent") +
-  geom_sf(data = subset(all_surveys, year(Date_Time) > 2010),aes(col = Survey_Class), size = 0.2)+
+  geom_sf(data = all_surveys, aes(col = year(Date_Time) <2010), size = 0.2)+
   # geom_sf(data = ONBoundary, fill = "transparent", col = "black") +
-  scale_color_manual(values=c("orangered","black","dodgerblue"),name = "Data Source")+
+  # scale_color_manual(values=c("orangered","black","dodgerblue"),name = "Data Source")+
   facet_grid(.~Survey_Class)+
   ggtitle("Data availability")
 
 # Tidy up data prep objects
 rm('counts', 'distance_matrix', 'dists', 'i', 'method_definitions',
-   'missing_spcd', 'nc_data', 'nc_data_cleaned', 'nc_data_pc', 'NC_only',
+   'missing_spcd', 'nc_data', 'nc_data2','nc_data_cleaned', 'nc_data_pc', 'NC_only',
    'nc_pc_matrix', 'nc_pc_surveyinfo', 'nc_species', 'NC_species', 'nc_tax',
    'obs_to_evaluate', 'PC_counts', 'PC_fulldat', 'PC_projects', 'PC_removed',
    'PC_sf', 'PC_summary', 'PC_surveys', 'PID', 'project_name', 'species',
@@ -651,7 +662,7 @@ rm('counts', 'distance_matrix', 'dists', 'i', 'method_definitions',
 # Select data meeting criteria for inclusion (dates, time since sunrise, etc)
 yr_day_start <- yday(ymd("2022-05-15"))
 yr_day_end <- yday(ymd("2022-07-15"))
-yr_start <- 2021
+yr_start <- 2000
 yr_end <- 2025
 hr_ssr_start <- -2
 hr_ssr_end <- 4
@@ -707,6 +718,25 @@ all_surveys$Obs_Index <- 1:nrow(all_surveys)
 
 rm(PC_to_use, SC_to_use, hr_ssr_end, hr_ssr_start, yr_day_end, yr_day_start,
    yr_end, yr_start, surveys_to_use)
+
+# Atlas Squares # 10 km x 10 km grid
+ONSquares <- st_make_grid(
+  Study_Area_bound,
+  cellsize = units::set_units(10*10,km^2),
+  what = "polygons",
+  square = TRUE,
+  flat_topped = FALSE)%>%
+  st_as_sf() %>%
+  st_intersection(Study_Area_bound) %>%
+  na.omit() %>%
+  mutate(sq_id = 1:nrow(.)) %>%
+  rename(geometry = x)
+
+all_surveys <- all_surveys %>%
+  mutate(Obs_Index = 1:nrow(.)) %>% st_intersection(ONSquares)
+full_count_matrix <- full_count_matrix[all_surveys$Obs_Index,]
+
+all_surveys$Obs_Index <- 1:nrow(all_surveys)
 
 # Prepare Covariates #===========================================================
 {
@@ -959,13 +989,13 @@ for (i in 1:nrow(ON_spcd)) {
 # TODO: this is not really working right because sq_id was missing using survey
 # id instead but that is not quite the same
 n_detections <- full_count_matrix
-rownames(n_detections) <- all_surveys$survey_ID
+rownames(n_detections) <- all_surveys$sq_id
 n_detections <- n_detections %>%
   reshape2::melt() %>%
-  dplyr::rename(survey_ID= Var1, Species_Code_BSC = Var2, detected = value) %>%
+  dplyr::rename(sq_id = Var1, Species_Code_BSC = Var2, detected = value) %>%
   subset(detected>0) %>%
   group_by(Species_Code_BSC) %>%
-  summarize(n_squares = length(unique(survey_ID)),
+  summarize(n_squares = length(unique(sq_id)),
             n_detections = sum(detected>0))
 
 species_to_model <- left_join(n_detections,BSC_species,
