@@ -776,7 +776,7 @@ nalcms_2020_Can <- reproducible::prepInputs(
   useCache = TRUE
   )
 
-nalcms_2020_SA <- terra::rast("analysis/data/derived_data/covariates/NALCMS_NorthON.tif") %>%
+nalcms_2020_SA <- terra::rast("analysis/data/derived_data/covariates/NALCMS_NorthON.tif")
 
 
 url_adaptwest_norm <- "https://s3-us-west-2.amazonaws.com/www.cacpd.org/CMIP6v73/normals/Normal_1961_1990_bioclim.zip"
@@ -822,7 +822,8 @@ covars$NALCMS <- covars$NALCMS %>% resample(covars$mat, method = "near")
 
 covars <- rast(covars)
 
-terra::writeRaster(covars, "analysis/data/derived_data/INLA_data/covariate_stack.grd")
+terra::writeRaster(covars, "analysis/data/derived_data/INLA_data/covariate_stack.grd",
+                   overwrite = TRUE)
 
 # Note Using terra very slow for fractional coverage
 
@@ -909,9 +910,11 @@ ONGrid <- ONGrid %>% left_join(st_drop_geometry(ONGrid_1km), by = join_by(point_
 # Remove surveys with no covariate information
 surveys_to_remove <- st_drop_geometry(all_surveys_covariates)
 surveys_to_remove <- which(is.na(rowSums(surveys_to_remove)))
-all_surveys_covariates <- all_surveys_covariates[-surveys_to_remove,]
-all_surveys <- all_surveys[-surveys_to_remove,]
-full_count_matrix <- full_count_matrix[-surveys_to_remove,]
+if(length(surveys_to_remove) > 0){
+  all_surveys_covariates <- all_surveys_covariates[-surveys_to_remove,]
+  all_surveys <- all_surveys[-surveys_to_remove,]
+  full_count_matrix <- full_count_matrix[-surveys_to_remove,]
+}
 
 covars_for_PCA <- all_surveys_covariates %>%
   st_drop_geometry() %>%
