@@ -752,10 +752,16 @@ ONGrid <- reproducible::Cache(st_make_grid(
   cellsize = units::set_units(10*10,km^2),
   what = "polygons",
   square = TRUE,
-  flat_topped = FALSE)%>%
+  flat_topped = FALSE
+) %>%
   st_as_sf() %>%
   st_intersection(Study_Area_bound) %>%
-  na.omit())
+  na.omit() %>%
+  # TODO: Not ideal, dropping several areas that are complex due to BCR intersection
+  # Needed for conversion to sp
+  st_set_geometry("geometry") %>%
+  filter(st_geometry_type(geometry) == "POLYGON") %>%
+  st_cast())
 
 ONGrid$point_id <- 1:nrow(ONGrid)
 ONGrid_centroid <- st_centroid(ONGrid)

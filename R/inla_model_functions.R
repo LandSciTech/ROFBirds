@@ -176,50 +176,81 @@ do_res_plot <- function(pred_rast, title, subtitle, subsubtitle = "", samp_grid,
   return(res_plot)
 }
 
-prep_sp_dat <- function(analysis_data, proj_use){
-  sp_dat <- analysis_data$all_surveys %>%
-    mutate(count = analysis_data$full_count_matrix[,sp_code]) %>%
-
-    # Only select point counts
-    subset(Survey_Type %in% c("Point_Count","ARU_SPT","ARU_SPM")) %>%
-    st_transform(proj_use)
-
-
+get_dist_to_range <- function(sp_dat, sp_code, analysis_data){
   # Extract ebird range for this species (if it exists)
 
   if (sp_code %in% names(analysis_data$species_ranges)){
 
     range <- analysis_data$species_ranges[[sp_code]] %>% st_transform(st_crs(sp_dat))
 
+    if(any(st_geometry_type(sp_dat) == "POLYGON" |
+       st_geometry_type(sp_dat) == "MULTIPOLYGON")){
+      start_pt <- st_centroid(sp_dat)
+    } else {
+      start_pt <- sp_dat
+    }
+
     # Identify distance of each survey to the edge of species range (in km)
-    sp_dat$distance_from_range <- ((st_distance(sp_dat, range)) %>% as.numeric())/1000
+    sp_dat$distance_from_range <- ((st_distance(start_pt, range)) %>% as.numeric())/1000
   } else{
     sp_dat$distance_from_range <- 0
   }
+  sp_dat
+}
 
+get_QPAD_offsets <- function(sp_dat, sp_code, analysis_data){
   # ---
   # Generate QPAD offsets for each survey (assumes unlimited distance point counts)
   # ---
 
   species_offsets <- subset(analysis_data$species_to_model, Species_Code_BSC == sp_code)
 
-  if (species_offsets$offset_exists == FALSE) sp_dat$log_QPAD_offset <- 0
-
-  if (species_offsets$offset_exists == TRUE){
-    # Calculate offset for duration of survey from species overall offset value
-    # how come this doesn't include time since sunrise? Maybe because it is in the model directly?
-    A_metres <- pi*species_offsets$EDR^2
-    p <- 1-exp(-sp_dat$Survey_Duration_Minutes*species_offsets$cue_rate)
-    sp_dat$log_QPAD_offset <- log(A_metres * p)
+  if (!species_offsets$offset_exists){
+    if(hasName(sp_dat, "Survey_Duration_Minutes")){
+      sp_dat$log_QPAD_offset <- 0
+    } else {
+      sp_dat$log_offset_5min <- 0
+    }
   }
+
+  if (species_offsets$offset_exists){
+    if(hasName(sp_dat, "Survey_Duration_Minutes")){
+      # Calculate offset for duration of survey from species overall offset value
+      # how come this doesn't include time since sunrise? Maybe because it is in the model directly?
+      A_metres <- pi*species_offsets$EDR^2
+      p <- 1-exp(-sp_dat$Survey_Duration_Minutes*species_offsets$cue_rate)
+      sp_dat$log_QPAD_offset <- log(A_metres * p)
+    } else {
+      # QPAD offsets associated with a 5-minute unlimited distance survey
+      sp_dat$log_offset_5min <- species_offsets$log_offset_5min
+    }
+
+  }
+  sp_dat
+}
+
+prep_sp_dat <- function(analysis_data, proj_use, train_dat_filter){
+  sp_dat <- analysis_data$all_surveys %>%
+    mutate(count = analysis_data$full_count_matrix[,sp_code]) %>%
+
+    # Only select point counts
+    subset(Survey_Type %in% c("Point_Count","ARU_SPT","ARU_SPM")) %>%
+    st_transform(proj_use) %>%
+    filter(!!rlang::parse_expr(train_dat_filter))
+
+  sp_dat <- get_dist_to_range(sp_dat, sp_code, analysis_data)
+
+  sp_dat <- get_QPAD_offsets(sp_dat, sp_code, analysis_data)
 
   sp_dat
 }
 
-fit_inla <- function(sp_code, analysis_data, proj_use, study_poly){
+fit_inla <- function(sp_code, analysis_data, proj_use, study_poly,
+                     train_dat_filter = "TRUE", save_mod = TRUE, file_name_bit = "all"){
   message("starting model for: ", sp_code)
 
-  model_file <- paste0("analysis/data/derived_data/INLA_results/models/", sp_code, "_mod.rds")
+  model_file <- paste0("analysis/data/derived_data/INLA_results/models/", sp_code, "_",
+                       file_name_bit, "_mod.rds")
 
   if(!dir.exists("analysis/data/derived_data/INLA_results/models")){
     dir.create("analysis/data/derived_data/INLA_results/models")
@@ -229,7 +260,7 @@ fit_inla <- function(sp_code, analysis_data, proj_use, study_poly){
   #if (file.exists(map_file)) next
 
   # Prepare data for this species
-  sp_dat <- prep_sp_dat(analysis_data, proj_use)
+  sp_dat <- prep_sp_dat(analysis_data, proj_use, train_dat_filter)
 
   # n_det_sq <- subset(sp_dat,count>0) %>%
   #   as.data.frame() %>%
@@ -301,6 +332,7 @@ fit_inla <- function(sp_code, analysis_data, proj_use, study_poly){
   # Model formulas
   # ---
 
+  # TODO: The sd linear is different from the one in 5_Model_Comparison_Crossval. Why?
   sd_linear <- 1
   prec_linear <-  c(1/sd_linear^2,1/(sd_linear/2)^2)
   model_components = as.formula(paste0('~
@@ -348,48 +380,29 @@ fit_inla <- function(sp_code, analysis_data, proj_use, study_poly){
   runtime_INLA <- difftime( end,start, units="mins") %>% round(2)
   message(paste0(sp_code," - ",runtime_INLA," min to fit model"))
 
-  saveRDS(fit_INLA, model_file)
+  if(save_mod){
+    saveRDS(fit_INLA, model_file)
+  }
 
   return(fit_INLA)
 }
 
-predict_inla <- function(analysis_data, mod){
+predict_inla <- function(dat, analysis_data, mod){
 
-  if (sp_code %in% names(analysis_data$species_ranges)){
+  dat <- get_dist_to_range(dat, sp_code, analysis_data)
 
-    range <- analysis_data$species_ranges[[sp_code]] %>% st_transform(st_crs(ONGrid))
-  }
-
-  # For every pixel on landscape, extract distance from eBird range limit
-  distance_from_range = (st_centroid(analysis_data$ONGrid) %>%
-                           st_distance( . , range) %>%
-                           as.numeric())/1000
-
-  ONGrid_species <- analysis_data$ONGrid %>% mutate(distance_from_range = distance_from_range)
-  # TODO: Not ideal, dropping several areas that are complex due to BCR intersection
-  # Needed for conversion to sp
-  ONGrid_species <- ONGrid_species %>%
-    st_set_geometry("geometry") %>%
-    filter(st_geometry_type(geometry) == "POLYGON") %>%
-    st_cast()
+  dat <- get_QPAD_offsets(dat, sp_code, analysis_data)
 
   # ---
-  # QPAD offsets associated with a 5-minute unlimited distance survey
-  # ---
-
-  species_offsets <- subset(analysis_data$species_to_model, Species_Code_BSC == sp_code)
-
-  log_offset_5min <- 0
-  if (species_offsets$offset_exists == TRUE) log_offset_5min <- species_offsets$log_offset_5min
-
-  # ---
-  # Generate predictions on ONGrid_species raster (1 km x 1 km pixels)
+  # Generate predictions on dat raster (1 km x 1 km pixels)
   # ---
   covariates_to_include <- paste0("PC",1:8)
 
+  # either based on actual survey or assumes 5-minute unlimited distance survey
+  offset_var <- str_subset(names(dat), "offset")
+
   pred_formula_PC = as.formula(paste0(' ~
-                  Intercept_PC +
-                  log_offset_5min +
+                  Intercept_PC +', offset_var, ' +
                   range_effect * distance_from_range +
                   spde_coarse +',
                                       paste0("Beta1_",covariates_to_include,'*',covariates_to_include, collapse = " + "),
@@ -400,7 +413,7 @@ predict_inla <- function(analysis_data, mod){
   start2 <- Sys.time()
   pred <- NULL
   pred <- generate(mod,
-                   as(ONGrid_species,'Spatial'),
+                   as(dat,'Spatial'),
                    formula =  pred_formula_PC,
                    n.samples = 1000)
 
@@ -408,27 +421,29 @@ predict_inla <- function(analysis_data, mod){
 
   # Median and upper/lower credible intervals (90% CRI)
   prediction_quantiles = apply(pred,1,function(x) quantile(x,c(0.05,0.5,0.95),na.rm = TRUE))
-  ONGrid_species$pred_q05 <- prediction_quantiles[1,]
-  ONGrid_species$pred_q50 <- prediction_quantiles[2,]
-  ONGrid_species$pred_q95 <- prediction_quantiles[3,]
-  ONGrid_species$pred_CI_width_90 <- prediction_quantiles[3,] - prediction_quantiles[1,]
-  ONGrid_species$CV <- apply(pred,1,function(x) sd(x,na.rm = TRUE)/mean(x,na.rm = TRUE))
+  dat$pred_q05 <- prediction_quantiles[1,]
+  dat$pred_q50 <- prediction_quantiles[2,]
+  dat$pred_q95 <- prediction_quantiles[3,]
+  dat$pred_CI_width_90 <- prediction_quantiles[3,] - prediction_quantiles[1,]
+  dat$CV <- apply(pred,1,function(x) sd(x,na.rm = TRUE)/mean(x,na.rm = TRUE))
 
   # Probability of observing species in 5-minute point count
   size <- mod$summary.hyperpar$'0.5quant'[1] # parameter of negative binomial
 
   # Probability of detecting species in a 5-minute point count
   prob_zero_PC <- dnbinom(0,mu=prediction_quantiles[2,],size=size)
-  ONGrid_species$pObs_5min <- 1-prob_zero_PC
+  dat$pObs_5min <- 1-prob_zero_PC
 
   end2 <- Sys.time()
   runtime_pred <- difftime( end2,start2, units="mins") %>% round(2)
   message(paste0(sp_code," - ",runtime_pred," min to generate predictions"))
-  return(ONGrid_species)
+  return(dat %>% mutate(species = sp_code))
 }
 
-map_inla_preds <- function(sp_code, analysis_data, preds, proj_use, atlas_squares){
-  map_file <- paste0("analysis/data/derived_data/INLA_results/maps/", sp_code, "_q50.png")
+map_inla_preds <- function(sp_code, analysis_data, preds, proj_use, atlas_squares,
+                           train_dat_filter = "TRUE", file_name_bit = "all"){
+  map_file <- paste0("analysis/data/derived_data/INLA_results/maps/", sp_code,"_",
+                     file_name_bit, "_q50.png")
 
   if(!dir.exists("analysis/data/derived_data/INLA_results/maps")){
     dir.create("analysis/data/derived_data/INLA_results/maps")
@@ -436,7 +451,7 @@ map_inla_preds <- function(sp_code, analysis_data, preds, proj_use, atlas_square
 
 
   # Prepare data for this species
-  sp_dat <- prep_sp_dat(analysis_data, proj_use)
+  sp_dat <- prep_sp_dat(analysis_data, proj_use, train_dat_filter)
 
   # Summarize atlas_squares where species was detected
   PC_detected <- sp_dat %>%
@@ -605,4 +620,19 @@ map_inla_preds <- function(sp_code, analysis_data, preds, proj_use, atlas_square
   }
 }
 
+# evalualte model performance based on predicted vs observed count
+evaluate_preds <- function(pred, mod, sp_code, analysis_data){
+  obs_count <- analysis_data$full_count_matrix[pred$Obs_Index, sp_code]
 
+  rmse_pred <- sqrt(mean((obs_count - pred$pred_q50)^2))
+
+  size <- mod$summary.hyperpar$'0.5quant'[1]
+
+  auc_pred <- pROC::auc(response = obs_count > 0, predictor = pred$pObs_5min)
+
+  # log pointwise predictive density, I think...
+  lppd_pred <- sum(dnbinom(obs_count, mu = pred$pred_q50, size = size, log = TRUE))
+
+  tibble(species = sp_code, fold = unique(pred$Crossval_Fold),
+         rmse = rmse_pred, auc = as.numeric(auc_pred), lppd = lppd_pred)
+}

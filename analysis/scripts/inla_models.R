@@ -69,7 +69,7 @@ for (sp_code in species_to_fit$Species_Code_BSC){
 
   sp_mod <- fit_inla(sp_code, analysis_data, st_crs(Study_Area_bound), Study_Area_bound)
 
-  sp_pred <- predict_inla(analysis_data, sp_mod)
+  sp_pred <- predict_inla(analysis_data$ONGrid, analysis_data, sp_mod)
 
   map_inla_preds(sp_code, analysis_data, sp_pred, st_crs(Study_Area_bound), ONSquares)
 
@@ -79,7 +79,104 @@ for (sp_code in species_to_fit$Species_Code_BSC){
 # Splits of interest include:
 # # train on old data (eg atlas 2) test on far north
 # # Spatial cross-validation to test overall performance David's
-#   5_Model_Comparison_Crossval this seems to fit with all but one grid square
-#   and test on last grid. Another option could be to make split based on
-#   spatially stratified random sample so hopefully both samples have fairly
-#   full representation.
+#   5_Model_Comparison_Crossval makes grid and assigns to n folds randomly
+
+# Evaluate across spatial cross-validation folds #===============================
+# Create spatial folds
+set.seed(999)
+n_folds <- 5
+Crossval_Grid <- st_make_grid(
+  Study_Area_bound,
+  cellsize = units::set_units(10*10,km^2),
+  what = "polygons",
+  square = TRUE,
+  flat_topped = FALSE
+) %>%
+  st_as_sf() %>%
+  na.omit() %>%
+  mutate(id = sample(1:nrow(.),nrow(.))) %>%
+  mutate(Crossval_Fold = cut(id,breaks = seq(0,max(id)+1,length.out = n_folds+1)) %>% as.factor() %>% as.numeric())%>%
+  dplyr::select(Crossval_Fold,x)
+
+analysis_data$all_surveys <- analysis_data$all_surveys %>% st_intersection(Crossval_Grid)
+
+model_performance <- data.frame()
+for (sp_code in species_to_fit$Species_Code_BSC){
+  for (n in unique(analysis_data$all_surveys$Crossval_Fold)) {
+    sp_mod <- fit_inla(sp_code, analysis_data, st_crs(Study_Area_bound), Study_Area_bound,
+                       train_dat_filter = paste0("Crossval_Fold != ", n),
+                       save_mod = FALSE)
+
+    sp_pred <- predict_inla(analysis_data$all_surveys %>% filter(Crossval_Fold == n),
+                            analysis_data, sp_mod)
+# TODO: use NEON model eval metric
+    sp_perf <- evaluate_preds(sp_pred, sp_mod, sp_code, analysis_data)
+
+    model_performance <- bind_rows(model_performance, sp_perf)
+  }
+}
+
+model_performance %>% group_by(species) %>%
+  summarise(across(-c(fold), lst(mean, min, max)))
+
+
+# Train on old data test on new data #===============================
+analysis_data$all_surveys <- analysis_data$all_surveys %>%
+  mutate(Crossval_Fold = ifelse(year(Date_Time) > 2015, "new", "old"))
+model_performance2 <- data.frame()
+for (sp_code in species_to_fit$Species_Code_BSC){
+  for (n in unique(analysis_data$all_surveys$Crossval_Fold)) {
+    sp_mod <- fit_inla(sp_code, analysis_data, st_crs(Study_Area_bound), Study_Area_bound,
+                       train_dat_filter = paste0("Crossval_Fold != '", n, "'"),
+                       save_mod = TRUE, file_name_bit = n)
+
+    sp_pred <- predict_inla(analysis_data$all_surveys %>% filter(Crossval_Fold == n),
+                            analysis_data, sp_mod)
+    # TODO: use NEON model eval metric
+    sp_perf <- evaluate_preds(sp_pred, sp_mod, sp_code, analysis_data)
+
+    model_performance2 <- bind_rows(model_performance2, sp_perf)
+  }
+}
+
+model_performance2 %>% group_by(species) %>%
+  summarise(across(-c(fold), lst(mean, min, max)))
+
+# use each model to make maps and compare
+for (sp_code in species_to_fit$Species_Code_BSC){
+  for (n in unique(analysis_data$all_surveys$Crossval_Fold)) {
+    sp_mod <- readRDS(paste0("analysis/data/derived_data/INLA_results/models/",
+                             sp_code,"_", n, "_mod.rds"))
+    sp_pred <- predict_inla(analysis_data$ONGrid, analysis_data, sp_mod)
+
+    map_inla_preds(sp_code, analysis_data, sp_pred, st_crs(Study_Area_bound),
+                   ONSquares, file_name_bit = n,
+                   train_dat_filter = paste0("Crossval_Fold != '", n, "'"))
+  }
+  map_list <- list.files("analysis/data/derived_data/INLA_results/maps",
+                         pattern = paste0(sp_code, "_new.*png$|_old.*png$"),
+                         full.names = TRUE)
+
+  name_list <- list.files("analysis/data/derived_data/INLA_results/maps",
+                          pattern = paste0(sp_code, "_new.*png$|_old.*png$"))
+  # WIP need to order by these so maps can be compared
+  name_list %>% str_remove("LEYE_new_|LEYE_old_") %>% unique()
+
+
+  plots <- lapply(map_list,
+                  function(x){
+    img <- as.raster(png::readPNG(x))
+    grid::rasterGrob(img, interpolate = FALSE)
+  })
+  png("file%03d.png", width=10, height=6.5, units="in", res=1000, type="cairo")
+  print(gridExtra::marrangeGrob(grobs = plots, nrow=2, ncol=1,top=NULL))
+  dev.off()
+
+}
+
+plots <- lapply(ll <- list.files(patt='.*[.]png'),function(x){
+  img <- as.raster(readPNG(x))
+  rasterGrob(img, interpolate = FALSE)
+})
+png("file%03d.png") print(marrangeGrob(grobs = plots, nrow=2, ncol=1,top=NULL)); dev.off()
+
