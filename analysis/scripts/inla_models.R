@@ -52,10 +52,6 @@ BCR_PROV <- st_read("analysis/data/raw_data/BCR_Terrestrial/BCR_Terrestrial_mast
   summarize(geometry = st_union(geometry)) %>%
   st_transform(st_crs(Study_Area_bound))
 
-ONGrid <- analysis_data$ONGrid %>%
-  st_intersection(BCR_PROV) %>%
-  dplyr::rename(geometry = x)
-
 # Loop through species, fit models, generate maps
 species_to_model <- analysis_data$species_to_model %>%
   arrange(desc(n_squares),desc(n_detections))
@@ -127,10 +123,10 @@ model_performance2 <- data.frame()
 for (sp_code in species_to_fit$Species_Code_BSC){
   for (n in unique(analysis_data$all_surveys$Crossval_Fold)) {
     sp_mod <- fit_inla(sp_code, analysis_data, st_crs(Study_Area_bound), Study_Area_bound,
-                       train_dat_filter = paste0("Crossval_Fold != '", n, "'"),
+                       train_dat_filter = paste0("Crossval_Fold == '", n, "'"),
                        save_mod = TRUE, file_name_bit = n)
 
-    sp_pred <- predict_inla(analysis_data$all_surveys %>% filter(Crossval_Fold == n),
+    sp_pred <- predict_inla(analysis_data$all_surveys %>% filter(Crossval_Fold != n),
                             analysis_data, sp_mod)
     # TODO: use NEON model eval metric
     sp_perf <- evaluate_preds(sp_pred, sp_mod, sp_code, analysis_data)
@@ -151,32 +147,38 @@ for (sp_code in species_to_fit$Species_Code_BSC){
 
     map_inla_preds(sp_code, analysis_data, sp_pred, st_crs(Study_Area_bound),
                    ONSquares, file_name_bit = n,
-                   train_dat_filter = paste0("Crossval_Fold != '", n, "'"))
+                   train_dat_filter = paste0("Crossval_Fold == '", n, "'"))
   }
   map_list <- list.files("analysis/data/derived_data/INLA_results/maps",
-                         pattern = paste0(sp_code, "_new.*png$|_old.*png$"),
+                         pattern = paste0(sp_code, ".*png$"),
                          full.names = TRUE)
 
   name_list <- list.files("analysis/data/derived_data/INLA_results/maps",
-                          pattern = paste0(sp_code, "_new.*png$|_old.*png$"))
+                          pattern = paste0(sp_code, "_new.*png$|", sp_code, "_old.*png$"))
+
   # WIP need to order by these so maps can be compared
-  name_list %>% str_remove("LEYE_new_|LEYE_old_") %>% unique()
+  map_vars <- name_list %>%
+    str_remove(paste0(sp_code, "_new_|", sp_code, "_old_|", sp_code, "_all_")) %>%
+    unique()
 
+  map_list <- map(map_vars, \(x){
+    str_subset(map_list, x)
+  }) %>% unlist()
+  dat_list <- str_extract(map_list, "new|old|all") %>% str_to_sentence()
 
-  plots <- lapply(map_list,
-                  function(x){
+  plots <- map2(map_list, dat_list,
+                  function(x, y){
     img <- as.raster(png::readPNG(x))
-    grid::rasterGrob(img, interpolate = FALSE)
+    gridExtra::arrangeGrob(grid::textGrob(y),
+                           grid::rasterGrob(img, interpolate = FALSE),
+                           nrow = 11, ncol = 1,
+                           layout_matrix = matrix(c(1, rep(2, 10)), ncol = 1))
+
   })
-  png("file%03d.png", width=10, height=6.5, units="in", res=1000, type="cairo")
-  print(gridExtra::marrangeGrob(grobs = plots, nrow=2, ncol=1,top=NULL))
+  png(paste0("analysis/data/derived_data/INLA_results/maps/", sp_code,"_compare%03d.png"), width=10, height=6.5, units="in", res=1000, type="cairo")
+  print(gridExtra::marrangeGrob(grobs = plots, nrow=3, ncol=1,top=NULL))
   dev.off()
 
 }
 
-plots <- lapply(ll <- list.files(patt='.*[.]png'),function(x){
-  img <- as.raster(readPNG(x))
-  rasterGrob(img, interpolate = FALSE)
-})
-png("file%03d.png") print(marrangeGrob(grobs = plots, nrow=2, ncol=1,top=NULL)); dev.off()
 

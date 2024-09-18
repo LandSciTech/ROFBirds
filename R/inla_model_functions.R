@@ -132,7 +132,7 @@ do_res_plot <- function(pred_rast, title, subtitle, subsubtitle = "", samp_grid,
                         col_pal_fn, species_label, levs_nm, file_nm){
   res_plot <- ggplot() +
 
-    stars::geom_stars(data = pred_rast) +
+    stars::geom_stars(data = pred_rast, na.rm = TRUE) +
     scale_fill_manual(name = paste0("<span style='font-size:13pt'>", title,
                                     "</span><br><span style='font-size:7pt'>", subtitle,
                                     "</span><br><span style='font-size:7pt'>", subsubtitle,
