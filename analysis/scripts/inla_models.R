@@ -65,7 +65,7 @@ for (sp_code in species_to_fit$Species_Code_BSC){
 
   sp_mod <- fit_inla(sp_code, analysis_data, st_crs(Study_Area_bound), Study_Area_bound)
 
-  sp_pred <- predict_inla(analysis_data$ONGrid, analysis_data, sp_mod)
+  sp_pred <- predict_inla(analysis_data$ONGrid, analysis_data, sp_mod, sp_code)
 
   map_inla_preds(sp_code, analysis_data, sp_pred, st_crs(Study_Area_bound), ONSquares)
 
@@ -101,11 +101,11 @@ for (sp_code in species_to_fit$Species_Code_BSC){
   for (n in unique(analysis_data$all_surveys$Crossval_Fold)) {
     sp_mod <- fit_inla(sp_code, analysis_data, st_crs(Study_Area_bound), Study_Area_bound,
                        train_dat_filter = paste0("Crossval_Fold != ", n),
-                       save_mod = FALSE)
+                       save_mod = TRUE, file_name_bit = n)
 
     sp_pred <- predict_inla(analysis_data$all_surveys %>% filter(Crossval_Fold == n),
-                            analysis_data, sp_mod)
-# TODO: use NEON model eval metric
+                            analysis_data, sp_mod, sp_code)
+
     sp_perf <- evaluate_preds(sp_pred, sp_mod, sp_code, analysis_data)
 
     model_performance <- bind_rows(model_performance, sp_perf)
@@ -113,8 +113,19 @@ for (sp_code in species_to_fit$Species_Code_BSC){
 }
 
 model_performance %>% group_by(species) %>%
-  summarise(across(-c(fold), lst(mean, min, max)))
+  summarise(across(-c(fold), lst(mean, min, max))) %>%
+  pivot_longer(-species, names_to = c("variable", "sum_var"), names_sep = "_m") %>%
+  mutate(sum_var = paste0("m", sum_var)) %>%
+  pivot_wider(names_from = "sum_var", values_from = "value") %>%
+  mutate(range = max - min,
+         across(-c(species, variable), \(x)round(x, 4))) %>%
+  View()
 
+# TODO: I added the eval metric that NEON uses CRPS but I am wondering if it is
+# a good one when we have so many zeros, I noticed when looking at the data it
+# seems like the CRPS very low (aka good) score whenever the
+# observed value is zero, regardless of the CI width around 0.
+# https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011393
 
 # Train on old data test on new data #===============================
 analysis_data$all_surveys <- analysis_data$all_surveys %>%
@@ -127,8 +138,8 @@ for (sp_code in species_to_fit$Species_Code_BSC){
                        save_mod = TRUE, file_name_bit = n)
 
     sp_pred <- predict_inla(analysis_data$all_surveys %>% filter(Crossval_Fold != n),
-                            analysis_data, sp_mod)
-    # TODO: use NEON model eval metric
+                            analysis_data, sp_mod, sp_code)
+
     sp_perf <- evaluate_preds(sp_pred, sp_mod, sp_code, analysis_data)
 
     model_performance2 <- bind_rows(model_performance2, sp_perf)
@@ -143,7 +154,7 @@ for (sp_code in species_to_fit$Species_Code_BSC){
   for (n in unique(analysis_data$all_surveys$Crossval_Fold)) {
     sp_mod <- readRDS(paste0("analysis/data/derived_data/INLA_results/models/",
                              sp_code,"_", n, "_mod.rds"))
-    sp_pred <- predict_inla(analysis_data$ONGrid, analysis_data, sp_mod)
+    sp_pred <- predict_inla(analysis_data$ONGrid, analysis_data, sp_mod, sp_code)
 
     map_inla_preds(sp_code, analysis_data, sp_pred, st_crs(Study_Area_bound),
                    ONSquares, file_name_bit = n,

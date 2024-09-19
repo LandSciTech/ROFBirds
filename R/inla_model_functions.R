@@ -387,7 +387,7 @@ fit_inla <- function(sp_code, analysis_data, proj_use, study_poly,
   return(fit_INLA)
 }
 
-predict_inla <- function(dat, analysis_data, mod){
+predict_inla <- function(dat, analysis_data, mod, sp_code){
 
   dat <- get_dist_to_range(dat, sp_code, analysis_data)
 
@@ -426,6 +426,10 @@ predict_inla <- function(dat, analysis_data, mod){
   dat$pred_q95 <- prediction_quantiles[3,]
   dat$pred_CI_width_90 <- prediction_quantiles[3,] - prediction_quantiles[1,]
   dat$CV <- apply(pred,1,function(x) sd(x,na.rm = TRUE)/mean(x,na.rm = TRUE))
+  # CRPS requires comparison to observed value, needs full sample for prediction
+  dat$obs_count <- analysis_data$full_count_matrix[dat$Obs_Index, sp_code]
+  dat$crps <- scoringRules::crps_sample(dat$obs_count, pred)
+  dat$logs <- scoringRules::logs_sample(dat$obs_count, pred)
 
   # Probability of observing species in 5-minute point count
   size <- mod$summary.hyperpar$'0.5quant'[1] # parameter of negative binomial
@@ -633,6 +637,19 @@ evaluate_preds <- function(pred, mod, sp_code, analysis_data){
   # log pointwise predictive density, I think...
   lppd_pred <- sum(dnbinom(obs_count, mu = pred$pred_q50, size = size, log = TRUE))
 
+  med_crps <- median(pred$crps)
+
+  med_crps_pres <- median(pred$crps[obs_count > 0])
+  med_crps_abs <- median(pred$crps[obs_count == 0])
+
+  med_logs <- median(pred$logs)
+
+  med_logs_pres <- median(pred$logs[obs_count > 0])
+  med_logs_abs <- median(pred$logs[obs_count == 0])
+
   tibble(species = sp_code, fold = unique(pred$Crossval_Fold),
-         rmse = rmse_pred, auc = as.numeric(auc_pred), lppd = lppd_pred)
+         rmse = rmse_pred, auc = as.numeric(auc_pred), lppd = lppd_pred,
+         med_crps = med_crps, med_logs = med_logs,
+         med_crps_pres = med_crps_pres, med_logs_pres = med_logs_pres,
+         med_crps_abs = med_crps_abs, med_logs_abs = med_logs_abs)
 }
