@@ -256,6 +256,11 @@ fit_inla <- function(sp_code, analysis_data, proj_use, study_poly,
     dir.create("analysis/data/derived_data/INLA_results/models")
   }
 
+  if(file.exists(model_file)){
+    message("Using saved model")
+    return(readRDS(model_file))
+  }
+
   # Skip this species if already run
   #if (file.exists(map_file)) next
 
@@ -387,7 +392,7 @@ fit_inla <- function(sp_code, analysis_data, proj_use, study_poly,
   return(fit_INLA)
 }
 
-predict_inla <- function(dat, analysis_data, mod, sp_code){
+predict_inla <- function(dat, analysis_data, mod, sp_code, do_crps = TRUE){
 
   dat <- get_dist_to_range(dat, sp_code, analysis_data)
 
@@ -426,10 +431,13 @@ predict_inla <- function(dat, analysis_data, mod, sp_code){
   dat$pred_q95 <- prediction_quantiles[3,]
   dat$pred_CI_width_90 <- prediction_quantiles[3,] - prediction_quantiles[1,]
   dat$CV <- apply(pred,1,function(x) sd(x,na.rm = TRUE)/mean(x,na.rm = TRUE))
-  # CRPS requires comparison to observed value, needs full sample for prediction
-  dat$obs_count <- analysis_data$full_count_matrix[dat$Obs_Index, sp_code]
-  dat$crps <- scoringRules::crps_sample(dat$obs_count, pred)
-  dat$logs <- scoringRules::logs_sample(dat$obs_count, pred)
+  if(do_crps){
+    # CRPS requires comparison to observed value, needs full sample for prediction
+    dat$obs_count <- analysis_data$full_count_matrix[dat$Obs_Index, sp_code]
+    dat$crps <- scoringRules::crps_sample(dat$obs_count, pred)
+    dat$logs <- scoringRules::logs_sample(dat$obs_count, pred)
+  }
+
 
   # Probability of observing species in 5-minute point count
   size <- mod$summary.hyperpar$'0.5quant'[1] # parameter of negative binomial
@@ -624,7 +632,7 @@ map_inla_preds <- function(sp_code, analysis_data, preds, proj_use, atlas_square
   }
 }
 
-# evalualte model performance based on predicted vs observed count
+# evaluate model performance based on predicted vs observed count
 evaluate_preds <- function(pred, mod, sp_code, analysis_data){
   obs_count <- analysis_data$full_count_matrix[pred$Obs_Index, sp_code]
 

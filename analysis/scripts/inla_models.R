@@ -57,15 +57,18 @@ species_to_model <- analysis_data$species_to_model %>%
   arrange(desc(n_squares),desc(n_detections))
 
 # adding a more southern dispersed species to compare
+species_to_fit <- c(
+  # "SOSA","LEYE","GRYE",
+  "DEJU")
 species_to_fit <- species_to_model %>%
-  subset(Species_Code_BSC %in% c("SOSA","LEYE","GRYE", "DEJU"))
+  subset(Species_Code_BSC %in% species_to_fit)
 
 # This is a functionified version of what David had in 4_Analysis_INLA
 for (sp_code in species_to_fit$Species_Code_BSC){
 
   sp_mod <- fit_inla(sp_code, analysis_data, st_crs(Study_Area_bound), Study_Area_bound)
 
-  sp_pred <- predict_inla(analysis_data$ONGrid, analysis_data, sp_mod, sp_code)
+  sp_pred <- predict_inla(analysis_data$ONGrid, analysis_data, sp_mod, sp_code, do_crps = FALSE)
 
   map_inla_preds(sp_code, analysis_data, sp_pred, st_crs(Study_Area_bound), ONSquares)
 
@@ -112,14 +115,51 @@ for (sp_code in species_to_fit$Species_Code_BSC){
   }
 }
 
-model_performance %>% group_by(species) %>%
+sp_pred %>% ggplot(aes(crps, colour = obs_count > 0))+
+  geom_density()+
+  geom_density(aes(x = crps), inherit.aes = FALSE)+
+  geom_point(data = sp_perf, aes(x = med_crps, y = 0), inherit.aes = FALSE)+
+  geom_point(data = sp_perf, aes(x = med_crps_abs, y = 0, colour = FALSE), inherit.aes = FALSE)+
+  geom_point(data = sp_perf, aes(x = med_crps_pres, y = 0, colour = TRUE), inherit.aes = FALSE)
+
+sp_pred %>% ggplot(aes(crps, obs_count))+
+  geom_point()
+
+sp_pred %>% ggplot(aes(pred_q50, obs_count))+
+  geom_point()+
+  coord_fixed()
+
+# Spatial pattern to cr ps?
+plot(sp_pred %>% filter(obs_count > 0) %>% select(crps), bgc = "grey")
+
+sp_pred %>%
+  select(crps) %>% st_transform(st_crs(target_raster)) %>%
+  terra::vect() %>% terra::rasterize(y = target_raster, field = "crps", fun = "max") %>%
+  terra::aggregate(fact = 50, na.rm = TRUE) %>%
+  terra::plot()
+
+# Is is related to number of obs?
+sp_pred %>%
+  select(crps) %>% st_transform(st_crs(target_raster)) %>%
+  terra::vect() %>% terra::rasterize(y = target_raster, field = "crps", fun = "count", background = 0) %>%
+  terra::aggregate(fact = 50, na.rm = TRUE, fun = "sum") %>%
+  terra::plot()
+
+ model_performance %>% group_by(species) %>%
   summarise(across(-c(fold), lst(mean, min, max))) %>%
   pivot_longer(-species, names_to = c("variable", "sum_var"), names_sep = "_m") %>%
   mutate(sum_var = paste0("m", sum_var)) %>%
   pivot_wider(names_from = "sum_var", values_from = "value") %>%
   mutate(range = max - min,
          across(-c(species, variable), \(x)round(x, 4))) %>%
-  View()
+  separate_wider_position(variable, widths = c(variable = 8, 1, observed = 4),
+                          too_few = "align_start") %>%
+  mutate(observed = replace_na(observed, "all") %>%
+           fct_relevel("all", "abs", "pres")) %>%
+  ggplot(aes(species, mean, ymin = min, ymax = max, col = observed))+
+  geom_point()+
+  facet_wrap(~variable, scales = "free", drop = TRUE, nrow = 1)+
+   scale_colour_viridis_d(end = 0.9)
 
 # TODO: I added the eval metric that NEON uses CRPS but I am wondering if it is
 # a good one when we have so many zeros, I noticed when looking at the data it
@@ -191,5 +231,34 @@ for (sp_code in species_to_fit$Species_Code_BSC){
   dev.off()
 
 }
+
+
+
+
+
+
+
+# Idea for how models should be submitted/evaluated
+
+# Forecasts make predictions to a set of points that we provide, should be
+# points where we have data but they have been with held from testing, points
+# should be selected to cover the widest possible range of the predictor space.
+# We don't really know what predictors are used in submitted models but can use
+# some typical ones to ensure representativeness. Will also want to ensure that
+# the subset of points includes a reasonable number of presences and absences
+# for each species in the test set. Possibly different points for different
+# species? Then the submission can be similar to NEONs where it is just a csv
+# with the point id, time id, model id, species id, metric id (abundance,
+# density, presence), sample id (eg. id of prediction sampled from model), and
+# prediction.
+
+# Would also be interesting to require raster output of some predictions and
+# uncertainty
+
+# I think we might want some different evaluations than NEON because for
+# abundance predicting 0 is easy for many species that are rare. So far I am
+# using median because mean seems like a bad idea when scores are so skewed.
+# Would be useful to show spatial distribution of predictions and also error
+
 
 
