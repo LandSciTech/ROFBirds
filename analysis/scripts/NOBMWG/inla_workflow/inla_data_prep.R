@@ -58,7 +58,7 @@ rm(my_packs)
 # load custom functions
 devtools::load_all(".")
 
-wt_auth() # Need your wildtrax username
+wt_auth() # Need your wildtrax username and password set as ENV variables
 
 # use reproducible package to Cache long running code
 options(reproducible.cachePath = "analysis/data/cache_data")
@@ -160,6 +160,7 @@ if(test_mode){
 
 # Download projects with 'PC' data (includes projects converted from ARU)
 wt_dl_loc_year <- safely(wt_dl_loc_year, quiet = FALSE)
+
 # Cache not really working as I would hope. Still does the download again...
 PC_fulldat <- map(PC_projects$project_id, ~wt_dl_loc_year(.x, sens_id = "PC"))
 
@@ -737,6 +738,11 @@ all_surveys <- all_surveys %>%
 full_count_matrix <- full_count_matrix[all_surveys$Obs_Index,]
 
 all_surveys$Obs_Index <- 1:nrow(all_surveys)
+
+analysis_data <- list(all_surveys = all_surveys,
+                      full_count_matrix = full_count_matrix)
+
+saveRDS(analysis_data, file = "analysis/data/interim_data/analysis_data_use.rds")
 
 # Prepare Covariates #===========================================================
 {
