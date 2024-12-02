@@ -33,11 +33,9 @@ Instead of using `ee_Initialize()` from rgee, I used the below code to avoid err
 
 ** That issue also notes that the developer of rgee is potentially not going to maintain it much longer so it might be better to do some of this in python directly. 
 
-
-
 #0.Prep
 
-The first time you run the code below you will need to authenticate through your 
+The first time you run the code below you will need to authenticate through your google account
 
 ```{r}
 ee$Authenticate(auth_mode='notebook')
