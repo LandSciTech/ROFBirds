@@ -33,3 +33,11 @@ existing covariate extraction from rasters.
   define these post extraction steps so the code could run without all the
   variables.
 
+## Combine data
+
+### Issues/suggestions
+  - Generally need to streamline data aquisition steps
+  - Why using napops instead of QPAD? Are the results the same? I tried to
+  compare once and they seemed to be different. David seems to set forest, od
+  and tssr to default values when creating species table.
+
