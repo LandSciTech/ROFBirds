@@ -1,3 +1,15 @@
+# ******************************************************************************
+# ******************************************************************************
+# Implementation of David Isle's Landscape Distribution Modeling ECCC workflow
+# for Northern Ontario: Covariate download
+# ******************************************************************************
+# ******************************************************************************
+# Includes downloading rasters and extracting data from GEE
+# ******************************************************************************
+# Notable changes of method:
+# * Added GEE data extraction using BAMs variable list.
+#   https://docs.google.com/spreadsheets/d/1XATuq8BOYC2KkbJObaturaf4NFD2ufvn/edit?usp=sharing&ouid=104837701987164094932&rtpof=true&sd=true
+# ******************************************************************************
 library(sf)
 library(tidyverse)
 library(terra)
@@ -164,7 +176,7 @@ visit <- all_surveys %>%
   dplyr::mutate(
     project_id = Project_Name, location_id = survey_ID,
     latitude = Latitude, longitude = Longitude,
-    year = lubridate::year(Date_Time), .keep = "none"
+    year = lubridate::year(Date_Time), Obs_Index, .keep = "none"
   )
 
 visit_yr <- visit %>%
@@ -248,6 +260,10 @@ visit.covs <- visit %>%
                   #ABoVE_1km, VLCE_1km),
                 as.factor))
 
+all_surveys_covariates <- all_surveys_covariates %>%
+  left_join(visit.covs %>% select(-c(project_id, location_id, latitude, longitude, year)),
+            by = "Obs_Index")
+
 # Extract grid covariates within 1 km of location #=============================
 
 # Continuous covariates
@@ -319,8 +335,12 @@ ONGrid <- ONGrid %>% left_join(st_drop_geometry(ONGrid_1km), by = join_by(point_
 # variation in habitat
 
 # Remove surveys with no covariate information
-surveys_to_remove <- st_drop_geometry(all_surveys_covariates)
-surveys_to_remove <- which(is.na(rowSums(surveys_to_remove)))
+surveys_to_remove <- st_drop_geometry(all_surveys_covariates)%>%
+  select(-Obs_Index, -matches("MODISLCC")) %>%  # dropping Modis because can't have factor here
+  select(-where(\(x) all(is.na(x))|all(x == 0)))
+
+surveys_to_remove <- which(is.na(rowSums(surveys_to_remove))) # drops 109 surveys that have NA for any variable
+
 if(length(surveys_to_remove) > 0){
   all_surveys_covariates <- all_surveys_covariates[-surveys_to_remove,]
   all_surveys <- all_surveys[-surveys_to_remove,]
@@ -329,21 +349,30 @@ if(length(surveys_to_remove) > 0){
 
 covars_for_PCA <- all_surveys_covariates %>%
   st_drop_geometry() %>%
-  dplyr::select(AMT_1km:Water_1km)
+  select(-Obs_Index, -matches("MODISLCC")) %>%
+  # dplyr::select(AMT_1km:Water_1km)
+  select(-where(\(x){v <- var(x); is.na(v)|v == 0})) # drops variables with any NAs which may not be necessary
 
 pca <- prcomp(covars_for_PCA, scale = TRUE)
 
 # Interpretation of specific axes (e.g., axes 1 and 2)
 
 summary(pca)   # Proportion variance explaind by axes
-fviz_eig(pca)  # Scree plot (first 5 axes explain 85% of variation in habitat between sites)
+factoextra::fviz_eig(pca)  # Scree plot (first 5 axes explain 85% of variation in habitat between sites)
 pca            # Variable loadings
 
-fviz_pca_var(pca,
+factoextra::fviz_pca_var(pca,
              axes = c(1,2),
              col.var = "contrib", # Color by contributions to the PC
-             gradient.cols = viridis(10),
+             gradient.cols = viridis::viridis(10, direction = -1),
              repel = TRUE     # Avoid text overlapping
+)
+
+factoextra::fviz_pca_var(pca,
+                         axes = c(1,3),
+                         col.var = "contrib", # Color by contributions to the PC
+                         gradient.cols = viridis::viridis(10, direction = -1),
+                         repel = TRUE     # Avoid text overlapping
 )
 
 # Predict PCA values for each survey location and standardize (mean = 0, sd = 1)
@@ -370,3 +399,18 @@ all_surveys_covariates <- all_surveys_covariates %>%
 all_surveys <- full_join(all_surveys,all_surveys_covariates)
 ONGrid <- bind_cols(ONGrid,ONGrid_PCA)
 
+# Save #========================================================================
+
+analysis_data_package <- list(
+
+  all_surveys = all_surveys, # Survey information (protocol, location, time, covariates)
+  full_count_matrix = full_count_matrix, # counts of each species for each survey
+
+  pca = pca,
+
+  # Contains covariates on ON-wide grid
+  ONGrid = ONGrid
+
+)
+
+saveRDS(analysis_data_package,"analysis/data/derived_data/INLA_data/analysis_data_covars.rds")
